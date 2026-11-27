@@ -63,6 +63,7 @@ const CSS = `
 /* 表单字段 */
 .wc-field{display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px}
 .wc-label{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#c9c9c9)}
+.wc-static{font-size:13px;color:var(--dsw-alias-label-primary,#e6e6e6);padding:7px 0}
 .wc-input,.wc-select,.wc-textarea{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.04));color:var(--dsw-alias-label-primary,#e6e6e6);border-radius:8px;padding:7px 11px;font:inherit;font-size:13px;width:100%;transition:border-color .15s}
 .wc-input:focus,.wc-select:focus,.wc-textarea:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,#3964fe)}
 .wc-select{appearance:none;cursor:pointer}
@@ -338,13 +339,7 @@ export function WechatPanel(props: { api: Api }) {
         "div",
         { className: "wc-field" },
         h("span", { className: "wc-label" }, "发送通道"),
-        h(
-          "select",
-          { className: "wc-select", value: config.sendMode, onChange: (e: any) => patch({ sendMode: e.target.value }) },
-          h("option", { value: "auto" }, "自动（后台失败回退前台）"),
-          h("option", { value: "front" }, "前台 UIA"),
-          h("option", { value: "bg" }, "后台 PostMessage"),
-        ),
+        h("span", { className: "wc-static" }, "后台零焦点（PostMessage）"),
       ),
       h(
         "div",

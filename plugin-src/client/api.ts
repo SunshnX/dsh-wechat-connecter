@@ -20,7 +20,7 @@ export interface BridgeStatus {
 export interface Config {
   enabled: boolean;
   autoStart: boolean;
-  sendMode: "front" | "bg" | "auto";
+  sendMode: "bg";
   pythonPath: string;
   pollInterval: number;
   botName: string;

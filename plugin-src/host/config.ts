@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export type SendMode = "front" | "bg" | "auto";
+export type SendMode = "bg";
 
 export interface PrivateChatConfig {
   enabled: boolean;
@@ -66,7 +66,7 @@ export interface WechatConnecterConfig {
   enabled: boolean;
   /** 插件加载时自动启动桥接。 */
   autoStart: boolean;
-  /** 发送通道：front 前台 UIA；bg 后台 PostMessage；auto 后台失败回退前台。 */
+  /** 发送通道：固定 bg（后台零焦点），已去除前台 UIA。 */
   sendMode: SendMode;
   /** 自定义 Python 解释器路径；空 = 自动探测。 */
   pythonPath: string;
@@ -102,7 +102,7 @@ export function defaultConfig(): WechatConnecterConfig {
   return {
     enabled: false,
     autoStart: false,
-    sendMode: "auto",
+    sendMode: "bg",
     pythonPath: "",
     pollInterval: 0.5,
     botName: "",
@@ -153,10 +153,8 @@ export function normalizeConfig(input: unknown): WechatConnecterConfig {
     persona: { ...base.persona, ...(isObj(u.persona) ? u.persona : {}) },
     github: { ...base.github, ...(isObj(u.github) ? u.github : {}) },
   } as WechatConnecterConfig;
-  // Coerce enums to valid values.
-  if (merged.sendMode !== "front" && merged.sendMode !== "bg" && merged.sendMode !== "auto") {
-    merged.sendMode = "auto";
-  }
+  // Coerce enums to valid values (发送通道已固定为后台)。
+  merged.sendMode = "bg";
   if (merged.private.replyStrategy !== "always" && merged.private.replyStrategy !== "mention") {
     merged.private.replyStrategy = "always";
   }

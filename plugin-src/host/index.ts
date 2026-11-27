@@ -35,7 +35,7 @@ const Config = z
   .object({
     enabled: z.boolean().default(false),
     autoStart: z.boolean().default(false),
-    sendMode: z.union([z.const("front"), z.const("bg"), z.const("auto")]).default("auto"),
+    sendMode: z.const("bg").default("bg"),
     pythonPath: z.string().default(""),
     pollInterval: z.number().default(0.5),
     botName: z.string().default(""),
