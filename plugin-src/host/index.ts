@@ -131,7 +131,7 @@ function apply(ctx: any, _config: unknown) {
     }
     // 否则跟随默认模型（跟随工作区 / DSH 默认）。
     try {
-      const defaults = ctx.agentDefaultModel ?? ctx.get?.("agentDefaultModel");
+      const defaults = ctx.get("agentDefaultModel");
       const sel = defaults?.currentSelection?.();
       if (sel && sel.provider && sel.model) {
         return {
@@ -146,25 +146,35 @@ function apply(ctx: any, _config: unknown) {
     return undefined;
   }
 
-  async function getOrCreateAgent(peer: string, peerType: PeerType, displayName: string) {
+  async function getOrCreateAgent(peer: string, peerType: PeerType, displayName: string): Promise<any> {
+    const agents = ctx.get("agents");
     const options = agentOptions();
     const existing = sessionMap.get(peer);
+
     if (existing) {
+      // 1. 同一进程内 agent 仍存活 → 直接复用，避免重复 resume/create。
+      const live = agents.get(existing.sessionId);
+      if (live) {
+        sessionMap.touch(peer);
+        return live;
+      }
+      // 2. 无 live agent（插件重启后）→ 用持久化会话恢复历史。
       try {
-        const handle = await ctx.get("agents").resume({
+        const handle = await agents.resume({
           resumeSessionId: existing.sessionId,
           agentOptions: options,
           setup,
         });
         handles.set(peer, handle);
-        return handle;
+        return handle.agent;
       } catch (error) {
         logger.warn(`[${name}] resume ${peer} 失败，将新建会话: ${String(error)}`);
         sessionMap.remove(peer);
       }
     }
+    // 3. 新建会话。
     const sessionId = randomUUID();
-    const handle = await ctx.get("agents").create({
+    const handle = await agents.create({
       sessionId,
       meta: { cwd: workspaceDir },
       agentOptions: options,
@@ -172,7 +182,7 @@ function apply(ctx: any, _config: unknown) {
     });
     sessionMap.set(peer, { sessionId, peerType, displayName, lastSeen: Date.now() });
     handles.set(peer, handle);
-    return handle;
+    return handle.agent;
   }
 
   function extractLastAssistantText(agent: any): string {
@@ -227,8 +237,7 @@ function apply(ctx: any, _config: unknown) {
   // -- inbound pipeline ------------------------------------------------------
   async function processMessage(peer: string, peerType: PeerType, msg: InboundMessage) {
     try {
-      const handle = await getOrCreateAgent(peer, peerType, msg.displayName);
-      const agent = handle.agent;
+      const agent = await getOrCreateAgent(peer, peerType, msg.displayName);
 
       const inboundText = buildInboundText(peerType, msg);
       const before = assistantCount(agent);
@@ -448,7 +457,7 @@ function apply(ctx: any, _config: unknown) {
     }
     let current = { provider: "", model: "" };
     try {
-      const sel = (ctx.agentDefaultModel ?? ctx.get?.("agentDefaultModel"))?.currentSelection?.();
+      const sel = ctx.get("agentDefaultModel")?.currentSelection?.();
       if (sel?.provider && sel?.model) current = { provider: sel.provider, model: sel.model };
     } catch {
       /* ignore */

@@ -145,18 +145,28 @@ class WeChatRuntime:
         self._listener = listener
 
     def _on_message(self, msg: dict, _listener) -> None:
-        """Listener callback: `msg` is a dict with local_id/type/sender_id/
-        create_time/content/sort_seq/username."""
+        """Listener callback: `msg` dict 字段（wechatauto 1.3.0.2）：
+        local_id / type(中文名，如"文本") / sender_id(数字 rowid，非 wxid) /
+        sender_username(真实发送者 wxid) / create_time / content / sort_seq /
+        username(会话 wxid)。"""
         try:
             username = str(msg.get("username", "") or "")
             if not username:
                 return
             content = str(msg.get("content", "") or "")
             msg_type = msg.get("type")
+            sender_username = str(msg.get("sender_username", "") or "")
+
+            # 跳过自己发出的消息（sender_username 是本机账号的 wxid），避免
+            # 把自己发的话当成对方消息再回复一次。
+            my_wxid = str(getattr(self.db, "wxid", "") or "")
+            if my_wxid and sender_username and sender_username == my_wxid:
+                return
+
             peer_type = self._classify(username)
 
-            # Skip non-text message types early (image/voice/file/…).
-            if msg_type not in (1, None) and not content:
+            # 跳过非文本消息（图片/语音/文件等无正文内容）。
+            if msg_type not in ("文本", None) and not content:
                 return
 
             is_at = self._detect_at(content, username)
@@ -165,7 +175,7 @@ class WeChatRuntime:
                 peerType=peer_type,
                 username=username,
                 displayName=username,
-                senderId=str(msg.get("sender_id", "") or ""),
+                senderId=sender_username,
                 senderName="",
                 content=content,
                 isAt=is_at,
