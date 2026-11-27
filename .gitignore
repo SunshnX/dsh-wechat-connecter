@@ -1,5 +1,6 @@
 node_modules/
 *.log
+*.tgz
 .DS_Store
 
 # 本地运行时数据（含微信 wxid、会话映射等敏感信息，绝不提交）
