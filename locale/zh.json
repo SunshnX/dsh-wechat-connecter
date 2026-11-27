@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "微信连接",
-    "description": "把微信变成 DeepSeek Harness 的聊天客户端：桥接启停、依赖检查、实时日志、人设管理与 GitHub 更新检查。"
+    "title": "wechat-connecter",
+    "description": "把微信变成 DeepSeek Harness 的聊天客户端：桥接启停、依赖检查、模型选择、人设管理与实时日志。"
   }
 }

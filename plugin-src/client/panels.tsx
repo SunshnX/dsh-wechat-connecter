@@ -1,7 +1,7 @@
-// Browser half — management panels (bridge + persona).
+// Browser half — combined management page (bridge + persona + model).
 
 import * as React from "react";
-import { Api, type Config, type LogLine, type SessionBinding } from "./api";
+import { Api, type Config, type LogLine, type ModelListResult, type SessionBinding } from "./api";
 
 const h = React.createElement;
 
@@ -112,7 +112,6 @@ function usePoll(cb: () => void, ms: number) {
   }, [cb, ms]);
 }
 
-// 开关组件
 function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
   return h(
     "label",
@@ -122,7 +121,6 @@ function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
   );
 }
 
-// 设置行（标题 + 可选描述 + 开关）
 function SettingRow(props: { title: string; desc?: string; checked: boolean; onChange: (v: boolean) => void }) {
   return h(
     "div",
@@ -137,11 +135,24 @@ function SettingRow(props: { title: string; desc?: string; checked: boolean; onC
   );
 }
 
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function firstLine(md: string): string {
+  const line = (md ?? "").split("\n").find((l) => l.trim() && !l.trim().startsWith("#"));
+  return line ? line.trim().slice(0, 60) : "";
+}
+
 // ---------------------------------------------------------------------------
-// Bridge panel
+// Combined panel
 // ---------------------------------------------------------------------------
-export function BridgePanel(props: { api: Api }) {
+export function WechatPanel(props: { api: Api }) {
   const { api } = props;
+
+  // -- bridge state --
   const [status, setStatus] = React.useState<"stopped" | "starting" | "running" | "error">("stopped");
   const [lastError, setLastError] = React.useState("");
   const [config, setConfig] = React.useState<Config | null>(null);
@@ -153,7 +164,15 @@ export function BridgePanel(props: { api: Api }) {
   const [depsInfo, setDepsInfo] = React.useState<any>(null);
   const [updateResult, setUpdateResult] = React.useState<any>(null);
   const [sessions, setSessions] = React.useState<SessionBinding[]>([]);
+  const [models, setModels] = React.useState<ModelListResult | null>(null);
   const logBox = React.useRef<HTMLDivElement | null>(null);
+
+  // -- persona state --
+  const [personaName, setPersonaName] = React.useState("");
+  const [personaContent, setPersonaContent] = React.useState("");
+  const [editing, setEditing] = React.useState<string | null>(null);
+  const [personaNotice, setPersonaNotice] = React.useState<string | null>(null);
+  const [personaError, setPersonaError] = React.useState<string | null>(null);
 
   const refreshStatus = React.useCallback(async () => {
     try {
@@ -185,9 +204,9 @@ export function BridgePanel(props: { api: Api }) {
   React.useEffect(() => {
     void refreshStatus();
     void api.listSessions().then(setSessions).catch(() => undefined);
+    void api.listModels().then(setModels).catch(() => undefined);
   }, [api, refreshStatus]);
 
-  // 始终轮询：状态与日志都持续刷新，桥接报错/退出也能实时体现。
   usePoll(refreshStatus, 2000);
   usePoll(refreshLogs, 1000);
 
@@ -220,9 +239,49 @@ export function BridgePanel(props: { api: Api }) {
           ? h("span", { className: "wc-badge wc-badge-error" }, "错误")
           : h("span", { className: "wc-badge wc-badge-stopped" }, "已停止");
 
+  // -- model select --
+  const modelValue = config.model?.provider && config.model?.model ? `${config.model.provider}/${config.model.model}` : "";
+  const followLabel = models?.current?.provider
+    ? `跟随默认（${models.current.provider} / ${models.current.model}）`
+    : "跟随默认（工作区）";
+  const onModelChange = (v: string) => {
+    if (!v) return patch({ model: { provider: "", model: "" } } as any);
+    const idx = v.indexOf("/");
+    const provider = v.slice(0, idx);
+    const model = v.slice(idx + 1);
+    return patch({ model: { provider, model } } as any);
+  };
+
+  // -- persona --
+  const persona = config.persona ?? {};
+  const cards = persona.cards ?? {};
+  const cardNames = Object.keys(cards).sort();
+
+  const savePersona = () => {
+    const trimmed = personaName.trim();
+    if (!trimmed) return setPersonaError("人设名不能为空");
+    if (!personaContent.trim()) return setPersonaError("人设内容不能为空");
+    setPersonaError(null);
+    api.savePersona(trimmed, personaContent).then(() => {
+      setPersonaNotice(`已保存「${trimmed}」`);
+      setPersonaName("");
+      setPersonaContent("");
+      setEditing(null);
+      void refreshStatus();
+    });
+  };
+
+  const startEdit = (n: string) => {
+    setEditing(n);
+    setPersonaName(n);
+    setPersonaContent(cards[n] ?? "");
+    setPersonaNotice(null);
+  };
+
   return h(
     "div",
     { className: "wc-root" },
+
     // -- 桥接状态 --
     h(
       "div",
@@ -248,7 +307,25 @@ export function BridgePanel(props: { api: Api }) {
       "div",
       { className: "wc-card" },
       h("div", { className: "wc-card-title" }, "回复设置"),
+      h(SettingRow, { title: "启动 DSH 自动启动桥接", desc: "打开 DSH 后自动拉起 Python 桥接进程", checked: config.autoStart, onChange: (v) => patch({ autoStart: v }) }),
       h(SettingRow, { title: "启用自动回复", desc: "关闭后插件只收不发", checked: config.enabled, onChange: (v) => patch({ enabled: v }) }),
+      h(
+        "div",
+        { className: "wc-field" },
+        h("span", { className: "wc-label" }, "模型"),
+        h(
+          "select",
+          { className: "wc-select", value: modelValue, onChange: (e: any) => onModelChange(e.target.value) },
+          h("option", { value: "" }, followLabel),
+          ...(models?.groups ?? []).map((g) =>
+            h(
+              "optgroup",
+              { label: g.name, key: g.id },
+              ...g.models.map((m) => h("option", { value: `${g.id}/${m.id}`, key: m.id }, m.name)),
+            ),
+          ),
+        ),
+      ),
       h(
         "div",
         { className: "wc-field" },
@@ -313,6 +390,68 @@ export function BridgePanel(props: { api: Api }) {
           ),
     ),
 
+    // -- 人设管理 --
+    h(
+      "div",
+      { className: "wc-card" },
+      h("div", { className: "wc-card-title" }, "人设管理"),
+      h("p", { className: "wc-hint" }, "人设卡内容会作为系统提示词注入到微信对端对应的 DSH 会话。切换人设后对新会话生效；已有会话在重启后生效。"),
+      h(
+        "div",
+        { className: "wc-field" },
+        h("span", { className: "wc-label" }, editing ? `编辑人设「${editing}」— 名称` : "新建人设 — 名称"),
+        h("input", { className: "wc-input", value: personaName, placeholder: "小鲸", onChange: (e: any) => setPersonaName(e.target.value) }),
+      ),
+      h(
+        "div",
+        { className: "wc-field" },
+        h("span", { className: "wc-label" }, "内容（Markdown）"),
+        h("textarea", { className: "wc-textarea", value: personaContent, onChange: (e: any) => setPersonaContent(e.target.value) }),
+      ),
+      h(
+        "div",
+        { className: "wc-actions" },
+        h("button", { className: "wc-btn wc-btn-primary", onClick: savePersona }, "保存人设"),
+        editing
+          ? h("button", { className: "wc-btn", onClick: () => { setEditing(null); setPersonaName(""); setPersonaContent(""); } }, "取消编辑")
+          : null,
+        personaNotice ? h("span", { className: "wc-success" }, personaNotice) : null,
+        personaError ? h("span", { className: "wc-error" }, personaError) : null,
+      ),
+      cardNames.length === 0
+        ? h("p", { className: "wc-hint" }, "还没有人设卡，先在上面新建一个。")
+        : h(
+            "div",
+            { className: "wc-sessions" },
+            cardNames.map((n) =>
+              h(
+                "div",
+                { className: "wc-persona-card", key: n },
+                h(
+                  "div",
+                  { className: "wc-persona-main" },
+                  h(
+                    "div",
+                    { className: "wc-persona-title" },
+                    h("span", { className: "wc-persona-name" }, n),
+                    persona.active === n ? h("span", { className: "wc-badge wc-badge-running" }, "当前") : null,
+                  ),
+                  h("div", { className: "wc-persona-preview" }, firstLine(cards[n])),
+                ),
+                h(
+                  "div",
+                  { className: "wc-persona-actions" },
+                  persona.active === n
+                    ? null
+                    : h("button", { className: "wc-btn", onClick: () => api.setActivePersona(n).then(refreshStatus) }, "启用"),
+                  h("button", { className: "wc-btn", onClick: () => startEdit(n) }, "编辑"),
+                  h("button", { className: "wc-btn wc-btn-danger", onClick: () => { if (window.confirm(`删除人设「${n}」？`)) api.deletePersona(n).then(refreshStatus); } }, "删除"),
+                ),
+              ),
+            ),
+          ),
+    ),
+
     // -- 实时日志 --
     h(
       "div",
@@ -343,138 +482,4 @@ export function BridgePanel(props: { api: Api }) {
       ),
     ),
   );
-}
-
-function fmtTime(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-
-// ---------------------------------------------------------------------------
-// Persona panel
-// ---------------------------------------------------------------------------
-export function PersonaPanel(props: { api: Api }) {
-  const { api } = props;
-  const [config, setConfig] = React.useState<Config | null>(null);
-  const [name, setName] = React.useState("");
-  const [content, setContent] = React.useState("");
-  const [editing, setEditing] = React.useState<string | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const refresh = React.useCallback(async () => {
-    try {
-      setConfig(await api.getConfig());
-    } catch {
-      /* ignore */
-    }
-  }, [api]);
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  if (!config) return h("div", { className: "wc-root" }, h("p", { className: "wc-hint" }, "加载中…"));
-
-  const persona = config.persona;
-  const cards = persona.cards ?? {};
-  const names = Object.keys(cards).sort();
-
-  const save = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return setError("人设名不能为空");
-    if (!content.trim()) return setError("人设内容不能为空");
-    setError(null);
-    api.savePersona(trimmed, content).then(() => {
-      setNotice(`已保存「${trimmed}」`);
-      setName("");
-      setContent("");
-      setEditing(null);
-      void refresh();
-    });
-  };
-
-  const startEdit = (n: string) => {
-    setEditing(n);
-    setName(n);
-    setContent(cards[n] ?? "");
-    setNotice(null);
-  };
-
-  return h(
-    "div",
-    { className: "wc-root" },
-    h("p", { className: "wc-hint" }, "人设卡内容会作为系统提示词注入到微信对端对应的 DSH 会话。切换人设后对新会话生效；已有会话在重启后生效。"),
-
-    h(
-      "div",
-      { className: "wc-card" },
-      h("div", { className: "wc-card-title" }, editing ? `编辑人设「${editing}」` : "新建人设"),
-      h(
-        "div",
-        { className: "wc-field" },
-        h("span", { className: "wc-label" }, "名称"),
-        h("input", { className: "wc-input", value: name, placeholder: "小鲸", onChange: (e: any) => setName(e.target.value) }),
-      ),
-      h(
-        "div",
-        { className: "wc-field" },
-        h("span", { className: "wc-label" }, "内容（Markdown）"),
-        h("textarea", { className: "wc-textarea", value: content, onChange: (e: any) => setContent(e.target.value) }),
-      ),
-      h(
-        "div",
-        { className: "wc-actions" },
-        h("button", { className: "wc-btn wc-btn-primary", onClick: save }, "保存"),
-        editing
-          ? h("button", { className: "wc-btn", onClick: () => { setEditing(null); setName(""); setContent(""); } }, "取消编辑")
-          : null,
-        notice ? h("span", { className: "wc-success" }, notice) : null,
-        error ? h("span", { className: "wc-error" }, error) : null,
-      ),
-    ),
-
-    h(
-      "div",
-      { className: "wc-card" },
-      h("div", { className: "wc-card-title" }, "人设卡"),
-      names.length === 0
-        ? h("p", { className: "wc-hint" }, "还没有人设卡，先在上面新建一个。")
-        : h(
-            "div",
-            { className: "wc-sessions" },
-            names.map((n) =>
-              h(
-                "div",
-                { className: "wc-persona-card", key: n },
-                h(
-                  "div",
-                  { className: "wc-persona-main" },
-                  h(
-                    "div",
-                    { className: "wc-persona-title" },
-                    h("span", { className: "wc-persona-name" }, n),
-                    persona.active === n ? h("span", { className: "wc-badge wc-badge-running" }, "当前") : null,
-                  ),
-                  h("div", { className: "wc-persona-preview" }, firstLine(cards[n])),
-                ),
-                h(
-                  "div",
-                  { className: "wc-persona-actions" },
-                  persona.active === n
-                    ? null
-                    : h("button", { className: "wc-btn", onClick: () => api.setActivePersona(n).then(refresh) }, "启用"),
-                  h("button", { className: "wc-btn", onClick: () => startEdit(n) }, "编辑"),
-                  h("button", { className: "wc-btn wc-btn-danger", onClick: () => { if (window.confirm(`删除人设「${n}」？`)) api.deletePersona(n).then(refresh); } }, "删除"),
-                ),
-              ),
-            ),
-          ),
-    ),
-  );
-}
-
-function firstLine(md: string): string {
-  const line = (md ?? "").split("\n").find((l) => l.trim() && !l.trim().startsWith("#"));
-  return line ? line.trim().slice(0, 60) : "";
 }

@@ -39,6 +39,12 @@ const Config = z
     pythonPath: z.string().default(""),
     pollInterval: z.number().default(0.5),
     botName: z.string().default(""),
+    model: z
+      .object({
+        provider: z.string().default(""),
+        model: z.string().default(""),
+      })
+      .default({ provider: "", model: "" }),
     private: z
       .object({
         enabled: z.boolean().default(true),
@@ -118,6 +124,12 @@ function apply(ctx: any, _config: unknown) {
 
   // 默认模型路由：未显式选模型的 Session 跟随 DSH 默认模型（参考官方 ApiSessionAgentController）。
   function agentOptions(): { provider: string; model: string; reasoningEffort?: string } | undefined {
+    // 用户显式指定了模型 → 优先使用。
+    const picked = store.config.model;
+    if (picked?.provider && picked?.model) {
+      return { provider: picked.provider, model: picked.model };
+    }
+    // 否则跟随默认模型（跟随工作区 / DSH 默认）。
     try {
       const defaults = ctx.agentDefaultModel ?? ctx.get?.("agentDefaultModel");
       const sel = defaults?.currentSelection?.();
@@ -406,12 +418,42 @@ function apply(ctx: any, _config: unknown) {
           const value = await checkForUpdate(store.config.github.repo);
           return { ok: true, value };
         }
+        case "model.list": {
+          const value = await listModels();
+          return { ok: true, value };
+        }
         default:
           return fail("unknown-method", `未知方法: ${method}`);
       }
     } catch (error) {
       return fail("internal", String(error));
     }
+  }
+
+  async function listModels() {
+    const llm = ctx.get("llm");
+    const providers = (typeof llm?.listProviders === "function" ? llm.listProviders() : []) as Array<{ id: string; name: string }>;
+    const groups: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }> = [];
+    for (const p of providers) {
+      try {
+        const models = await llm.listModels(p.id);
+        groups.push({
+          id: p.id,
+          name: p.name,
+          models: (models ?? []).map((m: any) => ({ id: m.id, name: m.name })),
+        });
+      } catch {
+        groups.push({ id: p.id, name: p.name, models: [] });
+      }
+    }
+    let current = { provider: "", model: "" };
+    try {
+      const sel = (ctx.agentDefaultModel ?? ctx.get?.("agentDefaultModel"))?.currentSelection?.();
+      if (sel?.provider && sel?.model) current = { provider: sel.provider, model: sel.model };
+    } catch {
+      /* ignore */
+    }
+    return { groups, current, selected: store.config.model };
   }
 
   async function checkForUpdate(repo: string) {
@@ -469,8 +511,8 @@ function apply(ctx: any, _config: unknown) {
   }
 
   ctx.effect(() => {
-    // Auto-start if configured.
-    if (store.config.autoStart && store.config.enabled) {
+    // 启动 DSH 时自动启动桥接（独立于「启用自动回复」开关）。
+    if (store.config.autoStart) {
       void startBridge();
     }
     return () => {

@@ -24,6 +24,7 @@ export interface Config {
   pythonPath: string;
   pollInterval: number;
   botName: string;
+  model: { provider: string; model: string };
   private: {
     enabled: boolean;
     replyStrategy: "always" | "mention";
@@ -71,6 +72,18 @@ export interface UpdateCheckResult {
   hasUpdate: boolean;
   url?: string;
   message: string;
+}
+
+export interface ModelGroup {
+  id: string;
+  name: string;
+  models: { id: string; name: string }[];
+}
+
+export interface ModelListResult {
+  groups: ModelGroup[];
+  current: { provider: string; model: string };
+  selected: { provider: string; model: string };
 }
 
 export interface SessionBinding {
@@ -139,5 +152,8 @@ export class Api {
   }
   checkUpdate(): Promise<UpdateCheckResult> {
     return this.call("update.check");
+  }
+  listModels(): Promise<ModelListResult> {
+    return this.call("model.list");
   }
 }

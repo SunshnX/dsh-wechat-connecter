@@ -54,6 +54,13 @@ export interface GithubConfig {
   checkUpdate: boolean;
 }
 
+export interface ModelConfig {
+  /** Provider 路由 id；空 = 跟随默认模型（跟随工作区 / DSH 默认）。 */
+  provider: string;
+  /** 模型 id；空 = 跟随默认模型。 */
+  model: string;
+}
+
 export interface WechatConnecterConfig {
   /** 桥接是否启用（决定是否响应消息）。 */
   enabled: boolean;
@@ -67,6 +74,8 @@ export interface WechatConnecterConfig {
   pollInterval: number;
   /** 机器人自己的微信昵称（用于判断点名）。 */
   botName: string;
+  /** 模型路由：空 = 跟随默认模型。 */
+  model: ModelConfig;
   private: PrivateChatConfig;
   group: GroupChatConfig;
   humanize: HumanizeConfig;
@@ -97,6 +106,7 @@ export function defaultConfig(): WechatConnecterConfig {
     pythonPath: "",
     pollInterval: 0.5,
     botName: "",
+    model: { provider: "", model: "" },
     private: {
       enabled: true,
       replyStrategy: "always",
@@ -136,6 +146,7 @@ export function normalizeConfig(input: unknown): WechatConnecterConfig {
   const merged: WechatConnecterConfig = {
     ...base,
     ...u,
+    model: { ...base.model, ...(isObj(u.model) ? u.model : {}) },
     private: { ...base.private, ...(isObj(u.private) ? u.private : {}) },
     group: { ...base.group, ...(isObj(u.group) ? u.group : {}) },
     humanize: { ...base.humanize, ...(isObj(u.humanize) ? u.humanize : {}) },
