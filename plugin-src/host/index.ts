@@ -68,6 +68,9 @@ const Config = z
         stripTrailingPunct: z.boolean().default(true),
         dedupeRepeat: z.boolean().default(true),
         bubbleGapMs: z.number().default(400),
+        typingDelay: z.boolean().default(true),
+        typingDelayPerCharMs: z.number().default(60),
+        typingDelayMaxMs: z.number().default(10000),
       })
       .default({
         splitLongReply: true,
@@ -75,6 +78,9 @@ const Config = z
         stripTrailingPunct: true,
         dedupeRepeat: true,
         bubbleGapMs: 400,
+        typingDelay: true,
+        typingDelayPerCharMs: 60,
+        typingDelayMaxMs: 10000,
       }),
     persona: z
       .object({
@@ -275,6 +281,15 @@ function apply(ctx: any, _config: unknown) {
 
       const bubbles = humanizeReply(store.config, replyText, msg.content);
       for (const bubble of bubbles) {
+        // 拟人打字延迟：按字数停顿，模拟真人逐字输入，单条消息封顶。
+        if (store.config.humanize.typingDelay) {
+          const chars = [...bubble].length;
+          const delay = Math.min(
+            chars * store.config.humanize.typingDelayPerCharMs,
+            store.config.humanize.typingDelayMaxMs,
+          );
+          if (delay > 0) await sleep(delay);
+        }
         bridge.sendText(peer, bubble);
         log("info", `回复 ${peer}：${truncate(bubble)}`);
         if (store.config.humanize.bubbleGapMs > 0) await sleep(store.config.humanize.bubbleGapMs);

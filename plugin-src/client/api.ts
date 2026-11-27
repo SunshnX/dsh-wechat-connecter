@@ -43,6 +43,9 @@ export interface Config {
     stripTrailingPunct: boolean;
     dedupeRepeat: boolean;
     bubbleGapMs: number;
+    typingDelay: boolean;
+    typingDelayPerCharMs: number;
+    typingDelayMaxMs: number;
   };
   persona: {
     active: string;

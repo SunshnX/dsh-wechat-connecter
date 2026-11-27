@@ -38,6 +38,12 @@ export interface HumanizeConfig {
   dedupeRepeat: boolean;
   /** 回复拆条之间的最小间隔（毫秒）。 */
   bubbleGapMs: number;
+  /** 模拟真人打字延迟：发送每条气泡前按字数停顿。 */
+  typingDelay: boolean;
+  /** 每个字的打字延迟（毫秒）。 */
+  typingDelayPerCharMs: number;
+  /** 单条消息的打字延迟上限（毫秒）。 */
+  typingDelayMaxMs: number;
 }
 
 export interface PersonaConfig {
@@ -130,6 +136,9 @@ export function defaultConfig(): WechatConnecterConfig {
       stripTrailingPunct: true,
       dedupeRepeat: true,
       bubbleGapMs: 400,
+      typingDelay: true,
+      typingDelayPerCharMs: 60,
+      typingDelayMaxMs: 10000,
     },
     persona: {
       active: "小鲸",

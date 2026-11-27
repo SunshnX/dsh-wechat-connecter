@@ -391,6 +391,7 @@ export function WechatPanel(props: { api: Api }) {
       h(SettingRow, { title: "长回复拆成多条短气泡", desc: "像真人发微信一样分段", checked: config.humanize.splitLongReply, onChange: (v) => patch({ humanize: { ...config.humanize, splitLongReply: v } } as any) }),
       h(SettingRow, { title: "去掉句尾标点", checked: config.humanize.stripTrailingPunct, onChange: (v) => patch({ humanize: { ...config.humanize, stripTrailingPunct: v } } as any) }),
       h(SettingRow, { title: "反鹦鹉学舌去重", desc: "不重复对方原话", checked: config.humanize.dedupeRepeat, onChange: (v) => patch({ humanize: { ...config.humanize, dedupeRepeat: v } } as any) }),
+      h(SettingRow, { title: "模拟真人打字延迟", desc: `按字数停顿，${config.humanize.typingDelayPerCharMs}ms/字，单条最多 ${(config.humanize.typingDelayMaxMs / 1000).toFixed(1)}s`, checked: config.humanize.typingDelay, onChange: (v) => patch({ humanize: { ...config.humanize, typingDelay: v } } as any) }),
     ),
 
     // -- 工作区 --
