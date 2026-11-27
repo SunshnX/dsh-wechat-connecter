@@ -19,7 +19,7 @@ const require = createRequire(import.meta.url);
 const PLUGIN_VERSION: string = (require("../package.json") as { version?: string }).version ?? "0.0.0";
 import { createConfigStore, type WechatConnecterConfig } from "./config";
 import { createSessionMapStore, type SessionMapStore, type PeerType } from "./session-map";
-import { activePersonaText } from "./persona";
+import { activePersonaText, PERSONA_SECTION_NAME, PERSONA_SECTION_ORDER } from "./persona";
 import { humanizeReply, shouldReply } from "./reply";
 import { BridgeProcess, type InboundMessage, type LogLine } from "./bridge";
 import { checkDeps, installDeps, resolvePython } from "./deps";
@@ -130,12 +130,33 @@ function apply(ctx: any, _config: unknown) {
   const truncate = (text: string, max = 120) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
   // -- agent creation / resume ---------------------------------------------
+  // 人设注入是第一优先级：在任何其他逻辑之前执行，且完全异常隔离——
+  // 即便人设解析/注册出错，也只告警，绝不抛错拖垮 agent 的创建/恢复。
   const setup = (agentCtx: any) => {
-    const text = activePersonaText(store.config);
-    if (!text) return;
-    const sp = agentCtx?.systemPrompt ?? agentCtx?.get?.("systemPrompt");
-    if (sp && typeof sp.section === "function") {
-      sp.section({ name: "wechat-persona", order: 100, text, interpolate: false });
+    try {
+      const text = activePersonaText(store.config);
+      if (!text) return;
+      const sp = agentCtx?.systemPrompt ?? agentCtx?.get?.("systemPrompt");
+      if (!sp || typeof sp.section !== "function") {
+        logger.warn(`[${name}] systemPrompt 服务不可用，跳过人设注入`);
+        return;
+      }
+      // 第一优先级：占用 DSH 的人设专用槽位（deployment:persona-prefix, order=0），
+      // 让人设排在系统提示词最顶端。若该槽位已被部署人设占用导致重名冲突，
+      // 回退到独立名字，仍以最小 order 保证尽量靠前。
+      try {
+        sp.section({ name: PERSONA_SECTION_NAME, order: PERSONA_SECTION_ORDER, text, interpolate: false });
+      } catch (prefixError) {
+        logger.warn(`[${name}] 人设专用槽位注册失败，回退独立槽位: ${String(prefixError)}`);
+        try {
+          sp.section({ name: "wechat-persona", order: 1, text, interpolate: false });
+        } catch (fallbackError) {
+          logger.warn(`[${name}] 人设回退槽位也失败: ${String(fallbackError)}`);
+        }
+      }
+    } catch (error) {
+      // 人设相关任何异常都不影响 agent 创建/恢复与其他功能。
+      logger.warn(`[${name}] 人设注入异常（已隔离）: ${String(error)}`);
     }
   };
 
