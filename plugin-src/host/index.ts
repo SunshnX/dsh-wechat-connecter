@@ -111,6 +111,7 @@ function apply(ctx: any, _config: unknown) {
   let depsResult: { ok: boolean; message: string } | null = null;
 
   const log = (level: LogLine["level"], text: string) => bridge.log(level, text);
+  const truncate = (text: string, max = 120) => (text.length > max ? `${text.slice(0, max)}…` : text);
 
   // -- agent creation / resume ---------------------------------------------
   const setup = (agentCtx: any) => {
@@ -266,6 +267,7 @@ function apply(ctx: any, _config: unknown) {
       const bubbles = humanizeReply(store.config, replyText, msg.content);
       for (const bubble of bubbles) {
         bridge.sendText(peer, bubble);
+        log("info", `回复 ${peer}：${truncate(bubble)}`);
         if (store.config.humanize.bubbleGapMs > 0) await sleep(store.config.humanize.bubbleGapMs);
       }
       lastReplied.set(peer, Date.now());
@@ -289,6 +291,12 @@ function apply(ctx: any, _config: unknown) {
     if (!msg.username) return;
     const peerType: PeerType = msg.peerType === "group" ? "group" : "contact";
     const peer = msg.username;
+
+    // 记录收到的消息到实时日志。
+    const fromLabel = peerType === "group"
+      ? `群聊 ${peer}（${msg.senderName || msg.senderId || "?"}）`
+      : `私聊 ${peer}`;
+    log("info", `收到 ${fromLabel}：${truncate(msg.content)}`);
 
     const meta = {
       peerType,
