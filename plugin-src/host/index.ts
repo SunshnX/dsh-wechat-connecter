@@ -25,7 +25,7 @@ import { BridgeProcess, type InboundMessage, type LogLine } from "./bridge";
 import { checkDeps, installDeps, resolvePython } from "./deps";
 
 const name = "dsh-wechat-connecter";
-const inject = [] as string[];
+const inject = ["connection"] as string[];
 
 // ---------------------------------------------------------------------------
 // Config schema (for the DSH config editor / form auto-generation reference).
@@ -291,8 +291,8 @@ function apply(ctx: any, _config: unknown) {
   // -- management RPC --------------------------------------------------------
   const RPC_ENDPOINT = `${name}/management`;
 
-  async function rpcHandle(method: string, payload: any): Promise<{ ok: boolean; value?: any; error?: { code: string; message: string } }> {
-    const fail = (code: string, message: string) => ({ ok: false, error: { code, message } });
+  async function rpcHandle(method: string, payload: any): Promise<{ ok: boolean; value?: any; error?: { code: string; message: string; details?: object } }> {
+    const fail = (code: string, message: string) => ({ ok: false, error: { code, message, details: {} } });
     try {
       switch (method) {
         case "bridge.status": {
@@ -415,9 +415,9 @@ function apply(ctx: any, _config: unknown) {
   }
 
   // -- lifecycle -------------------------------------------------------------
-  let rpcDispose: (() => void) | null = null;
+  let rpcDispose: (() => Promise<void>) | null = null;
   try {
-    const connection = ctx.get("connection");
+    const connection = ctx.connection ?? ctx.get?.("connection");
     if (connection?.fetch && typeof connection.fetch.register === "function") {
       rpcDispose = connection.fetch.register({
         path: `/api/${RPC_ENDPOINT}`,
@@ -432,8 +432,9 @@ function apply(ctx: any, _config: unknown) {
             return new Response("body is not JSON", { status: 400 });
           }
           const rpcId = typeof body?.rpcId === "string" ? body.rpcId : "invalid";
-          const method = body?.payload?.method;
-          const payload = body?.payload?.payload;
+          const call = body?.payload;
+          const method = call?.method;
+          const payload = call?.payload;
           const result = await rpcHandle(method, payload);
           return Response.json({ type: "server-response", rpcId, result });
         },
@@ -453,7 +454,7 @@ function apply(ctx: any, _config: unknown) {
     }
     return () => {
       bridge.stop();
-      rpcDispose?.();
+      void rpcDispose?.();
       for (const handle of handles.values()) {
         void handle.dispose().catch(() => undefined);
       }

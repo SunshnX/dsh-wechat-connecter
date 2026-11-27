@@ -86,8 +86,16 @@ export interface SessionBinding {
 export class Api {
   constructor(private connection: RpcConnection) {}
 
-  call<T = any>(method: string, payload: Record<string, unknown> = {}): Promise<T> {
-    return this.connection.rpc.call("/api", RPC_ENDPOINT, { method, payload });
+  async call<T = any>(method: string, payload: Record<string, unknown> = {}): Promise<T> {
+    const result = await this.connection.rpc.call("/api", RPC_ENDPOINT, { method, payload });
+    if (!result || typeof result !== "object" || typeof (result as any).ok !== "boolean") {
+      throw new Error("RPC 响应格式错误");
+    }
+    if ((result as any).ok !== true) {
+      const error = (result as any).error;
+      throw new Error(error?.message ?? error?.code ?? "RPC 调用失败");
+    }
+    return (result as any).value as T;
   }
 
   status(): Promise<BridgeStatus> {
