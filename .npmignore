@@ -1,5 +1,0 @@
-# 桥接运行时产生的 wechatauto 日志，不随包发布
-bridge/wechatauto_logs/
-**/__pycache__/
-**/*.pyc
-**/*.log
