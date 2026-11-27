@@ -391,7 +391,42 @@ export function WechatPanel(props: { api: Api }) {
       h(SettingRow, { title: "长回复拆成多条短气泡", desc: "像真人发微信一样分段", checked: config.humanize.splitLongReply, onChange: (v) => patch({ humanize: { ...config.humanize, splitLongReply: v } } as any) }),
       h(SettingRow, { title: "去掉句尾标点", checked: config.humanize.stripTrailingPunct, onChange: (v) => patch({ humanize: { ...config.humanize, stripTrailingPunct: v } } as any) }),
       h(SettingRow, { title: "反鹦鹉学舌去重", desc: "不重复对方原话", checked: config.humanize.dedupeRepeat, onChange: (v) => patch({ humanize: { ...config.humanize, dedupeRepeat: v } } as any) }),
-      h(SettingRow, { title: "模拟真人打字延迟", desc: `按字数停顿，${config.humanize.typingDelayPerCharMs}ms/字，单条最多 ${(config.humanize.typingDelayMaxMs / 1000).toFixed(1)}s`, checked: config.humanize.typingDelay, onChange: (v) => patch({ humanize: { ...config.humanize, typingDelay: v } } as any) }),
+      h(SettingRow, { title: "模拟真人打字延迟", desc: "发送前按字数停顿，模拟真人逐字输入", checked: config.humanize.typingDelay, onChange: (v) => patch({ humanize: { ...config.humanize, typingDelay: v } } as any) }),
+      config.humanize.typingDelay
+        ? h(
+            "div",
+            { className: "wc-row" },
+            h(
+              "div",
+              { className: "wc-field" },
+              h("span", { className: "wc-label" }, "每字延迟 (ms)"),
+              h("input", {
+                className: "wc-input",
+                type: "number",
+                min: 0,
+                step: 10,
+                value: config.humanize.typingDelayPerCharMs,
+                onChange: (e: any) => patch({ humanize: { ...config.humanize, typingDelayPerCharMs: Math.max(0, Number(e.target.value) || 0) } } as any),
+              }),
+            ),
+            h(
+              "div",
+              { className: "wc-field" },
+              h("span", { className: "wc-label" }, "单条上限 (ms)"),
+              h("input", {
+                className: "wc-input",
+                type: "number",
+                min: 0,
+                step: 500,
+                value: config.humanize.typingDelayMaxMs,
+                onChange: (e: any) => patch({ humanize: { ...config.humanize, typingDelayMaxMs: Math.max(0, Number(e.target.value) || 0) } } as any),
+              }),
+            ),
+          )
+        : null,
+      config.humanize.typingDelay
+        ? h("p", { className: "wc-hint" }, `例：100 字 ≈ ${Math.min(100 * config.humanize.typingDelayPerCharMs, config.humanize.typingDelayMaxMs) / 1000}s 后发出`)
+        : null,
     ),
 
     // -- 工作区 --
