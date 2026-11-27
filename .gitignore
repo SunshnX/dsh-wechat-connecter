@@ -11,3 +11,6 @@ state.json
 # 编辑器
 .vscode/
 .idea/
+
+# WorkBuddy 内部目录
+.workbuddy/
