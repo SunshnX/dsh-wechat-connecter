@@ -2,10 +2,8 @@
 """dsh-wechat-connecter Python bridge (sidecar).
 
 Reads WeChat messages from the local SQLCipher database via
-`wechatauto-replica` (WeChatDB + Listener), and sends replies via the
-zero-focus background channel (`bg_send_v2`): SPI_SETSCREENREADER +
-accessibility gate + UIA SetValue + PostMessage click. No foreground
-UIA channel.
+`wechatauto-replica` (WeChatDB + Listener), and sends replies via
+`guia.quick_send` (UIA) with an optional background PostMessage channel.
 
 Protocol with the Node host (newline-delimited JSON):
 
@@ -15,7 +13,7 @@ Protocol with the Node host (newline-delimited JSON):
     {"event": "log", "level": "info|warn|error", "text": "..."}
 
   Node -> Python (stdin):
-    {"type": "send", "who": "wxid_xxx", "text": "hello"}
+    {"type": "send", "who": "wxid_xxx", "text": "hello", "mode": "auto"}
     {"type": "stop"}
 
 All structured output is flushed line-by-line. Unstructured output (tracebacks,
@@ -61,12 +59,13 @@ def load_config(argv) -> dict:
 
 def main() -> int:
     config = load_config(sys.argv)
+    send_mode = str(config.get("sendMode", "auto"))
     poll_interval = float(config.get("pollInterval", 0.5))
     bot_name = str(config.get("botName", ""))
 
     log("info", "桥接启动，正在导入 wechatauto…")
     try:
-        from wechatauto import WeChatDB
+        from wechatauto import WeChatDB, quick_send, WeChatGUI
         # 注意：顶层 `wechatauto.Listener` 是 wx.Listener（空抽象基类，不接受参数）；
         # 真正从本地数据库轮询消息的监听器在 `wechatauto.db.Listener`。
         try:
@@ -85,9 +84,9 @@ def main() -> int:
         log("error", f"打开微信数据库失败（请确认微信已登录）：{exc}")
         return 2
 
-    runtime = WeChatRuntime(db, bot_name=bot_name)
+    runtime = WeChatRuntime(db, send_mode=send_mode, bot_name=bot_name)
     runtime.start_listener(interval=poll_interval)
-    log("info", f"监听器已启动（间隔 {poll_interval}s，发送通道：后台零焦点）")
+    log("info", f"监听器已启动（间隔 {poll_interval}s，发送模式 {send_mode}）")
     emit("ready", account=str(getattr(db, "wxid", "") or ""))
 
     # stdin command loop
@@ -108,10 +107,11 @@ def main() -> int:
             if cmd_type == "send":
                 who = str(cmd.get("who", ""))
                 text = str(cmd.get("text", ""))
+                mode = str(cmd.get("mode", send_mode))
                 if not who or not text:
                     log("warn", "send 命令缺少 who/text")
                     continue
-                runtime.send_text(who, text)
+                runtime.send_text(who, text, mode)
     except KeyboardInterrupt:
         pass
     finally:
@@ -123,11 +123,13 @@ def main() -> int:
 class WeChatRuntime:
     """Owns the DB Listener and the send path."""
 
-    def __init__(self, db, bot_name: str = ""):
+    def __init__(self, db, send_mode: str = "auto", bot_name: str = ""):
         self.db = db
+        self.send_mode = send_mode
         self.bot_name = bot_name
         self._listener = None
         self._send_lock = threading.Lock()
+        self._gui = None
 
     # -- receive -----------------------------------------------------------
     def start_listener(self, interval: float = 0.5) -> None:
@@ -203,20 +205,77 @@ class WeChatRuntime:
         return False
 
     # -- send --------------------------------------------------------------
-    def send_text(self, who: str, text: str) -> None:
-        """发送一条消息。仅保留后台零焦点通道（bg_send_v2），不再回退前台 UIA。"""
+    def _get_gui(self):
+        """复用单个 WeChatGUI 实例：其内部缓存了「当前会话 + 输入框」，连续发送
+        同一会话时走快速路径，不再每条重新搜索输入框（拆分多条气泡时尤其明显）。"""
+        if self._gui is None:
+            from wechatauto import WeChatGUI
+
+            self._gui = WeChatGUI()
+            # 加速节奏：缩短打字/休眠间隔，提升连续发送吞吐。
+            try:
+                from wechatauto import rhythm
+
+                rhythm.set_profile("fast")
+            except Exception:  # noqa: BLE001
+                pass
+        return self._gui
+
+    def send_text(self, who: str, text: str, mode: str = "auto") -> None:
         with self._send_lock:
             try:
-                from bg_send_v2 import send_background_v2
-
-                ok, reason = send_background_v2(
-                    who, text, db=self.db, log=lambda m: log("info", m))
-                if ok:
-                    log("info", f"[bg] 已发送给 {who}")
-                else:
-                    log("warn", f"[bg] 发送失败（{reason}）→ {who}")
+                if mode == "bg":
+                    ok = self._send_background(who, text)
+                    if ok:
+                        log("info", f"[bg] 已发送给 {who}")
+                        return
+                    log("warn", "后台发送失败，回退前台 UIA 发送")
+                self._send_front(who, text)
             except Exception as exc:  # noqa: BLE001
                 log("error", f"发送给 {who} 失败：{exc}")
+
+    def _send_front(self, who: str, text: str) -> None:
+        gui = self._get_gui()
+        # 已是当前会话则跳过 open_chat（侧栏搜索+点击+固定等待是主要耗时点）。
+        try:
+            already = gui._chat_is_open(who)
+        except Exception:  # noqa: BLE001
+            already = False
+        if not already and not gui.open_chat(who):
+            log("warn", f"[front] 打开会话失败：{who}")
+            return
+        # 快速路径：复用上次成功发送缓存的输入框坐标，不再重新探测。
+        box = getattr(gui, "_last_input_box", None)
+        if box is not None and gui.input_text(text, box=box, fast=True):
+            if gui.click_send(fast=True):
+                log("info", f"[front] 已发送给 {who}")
+                return
+        # 完整路径（会重新探测输入框并缓存，供下次快速路径使用）。
+        if gui.input_text(text) and gui.click_send():
+            log("info", f"[front] 已发送给 {who}")
+        else:
+            log("warn", f"[front] 发送失败：{who}")
+
+    def _send_background(self, who: str, text: str) -> bool:
+        # 测试版 v2：完整 SPI_SETSCREENREADER + accessibility gate + FindAll + PostMessage 方案
+        try:
+            from bg_send_v2 import send_background_v2
+
+            ok, reason = send_background_v2(
+                who, text, db=self.db, log=lambda m: log("info", m))
+            if ok:
+                return True
+            log("info", f"bgv2 发送失败（{reason}），回退 v1")
+        except Exception as exc:  # noqa: BLE001
+            log("debug", f"bgv2 通道不可用：{exc}")
+        # v1：UIA 拿输入框句柄 + PostMessage（尽力而为）
+        try:
+            from bg_send import send_background  # noqa: PLC0415
+
+            return send_background(self._get_gui(), who, text)
+        except Exception as exc:  # noqa: BLE001
+            log("debug", f"后台发送通道不可用：{exc}")
+            return False
 
     def stop(self) -> None:
         try:
