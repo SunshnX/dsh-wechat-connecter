@@ -257,6 +257,18 @@ class WeChatRuntime:
             log("warn", f"[front] 发送失败：{who}")
 
     def _send_background(self, who: str, text: str) -> bool:
+        # 测试版 v2：完整 SPI_SETSCREENREADER + accessibility gate + FindAll + PostMessage 方案
+        try:
+            from bg_send_v2 import send_background_v2
+
+            ok, reason = send_background_v2(
+                who, text, db=self.db, log=lambda m: log("info", m))
+            if ok:
+                return True
+            log("info", f"bgv2 发送失败（{reason}），回退 v1")
+        except Exception as exc:  # noqa: BLE001
+            log("debug", f"bgv2 通道不可用：{exc}")
+        # v1：UIA 拿输入框句柄 + PostMessage（尽力而为）
         try:
             from bg_send import send_background  # noqa: PLC0415
 
