@@ -496,10 +496,24 @@ export function WechatPanel(props: { api: Api }) {
                 { className: "wc-session-row", key: s.peer },
                 h("span", { className: "wc-session-peer" }, s.peer),
                 h("span", { className: "wc-session-id" }, s.binding.sessionId),
+                h("button", {
+                  className: "wc-btn wc-btn-danger",
+                  title: "清空后，下次该对端发消息会用全新会话，之前的聊天记忆不再保留",
+                  onClick: () => {
+                    if (window.confirm(`清空与「${s.peer}」的对话记忆？\n\n该对端下次发消息会开启全新会话，之前的上下文将不再保留。`)) {
+                      api.clearMemory(s.peer)
+                        .then((list) => { setSessions(list); void refreshStatus(); })
+                        .catch((e) => window.alert(String(e?.message ?? e)));
+                    }
+                  },
+                }, "清空记忆"),
                 h("button", { className: "wc-btn wc-btn-danger", onClick: () => api.unbindSession(s.peer).then(setSessions) }, "解绑"),
               ),
             ),
           ),
+      sessions.length > 0
+        ? h("p", { className: "wc-hint" }, "「清空记忆」会让该对端下次发消息时开启全新会话，此前上下文不再保留（正在回复时无法清空）。")
+        : null,
     ),
 
     // -- 人设管理 --

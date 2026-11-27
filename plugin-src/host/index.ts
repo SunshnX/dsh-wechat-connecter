@@ -120,6 +120,7 @@ function apply(ctx: any, _config: unknown) {
   const bridge = new BridgeProcess(store.config);
   const handles = new Map<string, { agent: any; dispose(): Promise<void> }>();
   const peerQueues = new Map<string, Promise<unknown>>();
+  const inFlightPeers = new Set<string>();
   const lastReplied = new Map<string, number>();
   let depsInstalling = false;
   let depsResult: { ok: boolean; message: string } | null = null;
@@ -423,7 +424,14 @@ function apply(ctx: any, _config: unknown) {
     if (!shouldReply(store.config, meta)) return;
 
     const prev = peerQueues.get(peer) ?? Promise.resolve();
-    const next = prev.then(() => processMessage(peer, peerType, msg)).catch(() => undefined);
+    inFlightPeers.add(peer);
+    const next = prev
+      .then(() => processMessage(peer, peerType, msg))
+      .catch(() => undefined)
+      .then(() => {
+        // 队列尾部完成才解除 busy 标记（多条排队时只有最后一个执行到这里）。
+        if (peerQueues.get(peer) === next) inFlightPeers.delete(peer);
+      });
     peerQueues.set(peer, next);
   }
 
@@ -581,6 +589,36 @@ function apply(ctx: any, _config: unknown) {
           }
           return { ok: true, value: sessionMap.list() };
         }
+        case "sessions.clearMemory": {
+          // 等价于 whale_girl 的 resetSession：丢弃该对端的会话绑定，下次消息
+          // 会以全新 sessionId 建会话，从而"忘记"此前全部上下文。
+          const peer = String(payload?.peer ?? "");
+          if (!peer) return fail("bad-request", "缺少对端 peer。");
+          if (inFlightPeers.has(peer)) {
+            return fail("peer-busy", "该对话正在生成回复，请等回复结束后再清空。");
+          }
+          const binding = sessionMap.get(peer);
+          if (!binding) return fail("no-binding", "该对端没有可清空的会话绑定。");
+          // 释放 live agent 并移除映射。
+          const handle = handles.get(peer);
+          if (handle) {
+            void handle.dispose().catch(() => undefined);
+            handles.delete(peer);
+          }
+          sessionMap.remove(peer);
+          // 清理该会话的定时任务投递残留状态。
+          const sid = binding.sessionId;
+          scheduleTurns.delete(sid);
+          openTurns.delete(sid);
+          for (const key of [...scheduleAnswers.keys()]) {
+            if (key.startsWith(`${sid}:`)) scheduleAnswers.delete(key);
+          }
+          // 清理回复节奏与队列状态。
+          lastReplied.delete(peer);
+          peerQueues.delete(peer);
+          log("info", `已清空 ${peer} 的会话记忆，下次消息将使用全新会话`);
+          return { ok: true, value: sessionMap.list() };
+        }
         case "update.check": {
           const value = await checkForUpdate(store.config.github.repo);
           return { ok: true, value };
@@ -708,6 +746,8 @@ function apply(ctx: any, _config: unknown) {
         void handle.dispose().catch(() => undefined);
       }
       handles.clear();
+      peerQueues.clear();
+      inFlightPeers.clear();
       sessionMap.flush();
     };
   }, `${name}.lifecycle()`);

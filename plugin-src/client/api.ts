@@ -161,6 +161,9 @@ export class Api {
   unbindSession(peer: string): Promise<SessionBinding[]> {
     return this.call("sessions.unbind", { peer });
   }
+  clearMemory(peer: string): Promise<SessionBinding[]> {
+    return this.call("sessions.clearMemory", { peer });
+  }
   checkUpdate(): Promise<UpdateCheckResult> {
     return this.call("update.check");
   }
