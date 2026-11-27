@@ -27,6 +27,7 @@ export interface Config {
   model: { provider: string; model: string };
   workspace: string;
   scheduledDelivery: boolean;
+  autoRenameTitle: boolean;
   private: {
     enabled: boolean;
     replyStrategy: "always" | "mention";

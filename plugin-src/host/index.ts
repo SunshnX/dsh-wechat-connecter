@@ -41,6 +41,7 @@ const Config = z
     botName: z.string().default(""),
     workspace: z.string().default(""),
     scheduledDelivery: z.boolean().default(true),
+    autoRenameTitle: z.boolean().default(true),
     model: z
       .object({
         provider: z.string().default(""),
@@ -160,6 +161,42 @@ function apply(ctx: any, _config: unknown) {
       logger.warn(`[${name}] 读取默认模型失败: ${String(error)}`);
     }
     return undefined;
+  }
+
+  const TITLE_PREFIX = "微信 · ";
+
+  /** 把会话标题设为「微信 · 对端名字」（对齐 dsh-im 的渠道标题前缀）。 */
+  function applySessionTitle(agent: any, peer: string, peerType: PeerType, displayName: string) {
+    if (!store.config.autoRenameTitle) return;
+    const raw = String(displayName || "").trim();
+    // 没拿到昵称（还是 wxid / 空）时用类型标签兜底，保证标题可读。
+    const label = raw && raw !== peer ? raw : (peerType === "group" ? "微信群" : "微信好友");
+    const title = `${TITLE_PREFIX}${label}`.slice(0, 80);
+    // 已设过相同标题就跳过（已有会话重启后不重复写事件）。
+    const binding = sessionMap.get(peer);
+    if (binding?.title === title) return;
+    try {
+      const session = agent?.session;
+      if (!session) return;
+      const titleSvc = ctx.sessionTitle;
+      if (titleSvc && typeof titleSvc.rename === "function") {
+        titleSvc.rename(session, title);
+      } else if (typeof session.append === "function") {
+        // 用 user source + 空 messageSeqs：与 DSH 的 sessionTitle.rename() 写入格式
+        // 一致（fallback source 要求非空 messageSeqs，这里不用它）。
+        session.append("session/title", {
+          title,
+          messageSeqs: [],
+          source: { kind: "user" },
+        });
+      }
+      if (binding) {
+        sessionMap.set(peer, { ...binding, title });
+      }
+      log("info", `会话标题：${title}`);
+    } catch (error) {
+      logger.warn(`[${name}] 设置会话标题失败 (${peer}): ${String(error)}`);
+    }
   }
 
   async function getOrCreateAgent(peer: string, peerType: PeerType, displayName: string): Promise<any> {
@@ -361,6 +398,9 @@ function apply(ctx: any, _config: unknown) {
   async function processMessage(peer: string, peerType: PeerType, msg: InboundMessage) {
     try {
       const agent = await getOrCreateAgent(peer, peerType, msg.displayName);
+
+      // 自动把会话改名为「微信 · 对端名字」（对齐 dsh-im 的渠道标题前缀）。
+      applySessionTitle(agent, peer, peerType, msg.displayName);
 
       const inboundText = buildInboundText(peerType, msg);
       const before = assistantCount(agent);

@@ -351,6 +351,7 @@ export function WechatPanel(props: { api: Api }) {
       h(SettingRow, { title: "启动 DSH 自动启动桥接", desc: "打开 DSH 后自动拉起 Python 桥接进程", checked: config.autoStart, onChange: (v) => patch({ autoStart: v }) }),
       h(SettingRow, { title: "启用自动回复", desc: "关闭后插件只收不发", checked: config.enabled, onChange: (v) => patch({ enabled: v }) }),
       h(SettingRow, { title: "定时任务投递", desc: "定时/计划任务在绑定会话里的回复也发到微信", checked: config.scheduledDelivery, onChange: (v) => patch({ scheduledDelivery: v }) }),
+      h(SettingRow, { title: "自动命名会话", desc: "会话标题设为「微信 · 对端名字」，像 dsh-im 那样带渠道标识", checked: config.autoRenameTitle, onChange: (v) => patch({ autoRenameTitle: v }) }),
       h(
         "div",
         { className: "wc-field" },

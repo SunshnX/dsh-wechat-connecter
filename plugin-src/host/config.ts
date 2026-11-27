@@ -89,6 +89,8 @@ export interface WechatConnecterConfig {
   workspace: string;
   /** 定时/计划任务在绑定会话里产生的回复，也投递到微信（像 dsh-im 的 deferred delivery）。 */
   scheduledDelivery: boolean;
+  /** 自动把会话改名为「微信 · 对端名字」（像 dsh-im 的渠道标题前缀）。 */
+  autoRenameTitle: boolean;
   private: PrivateChatConfig;
   group: GroupChatConfig;
   humanize: HumanizeConfig;
@@ -122,6 +124,7 @@ export function defaultConfig(): WechatConnecterConfig {
     model: { provider: "", model: "" },
     workspace: "",
     scheduledDelivery: true,
+    autoRenameTitle: true,
     private: {
       enabled: true,
       replyStrategy: "always",

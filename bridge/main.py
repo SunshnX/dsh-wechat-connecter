@@ -170,13 +170,16 @@ class WeChatRuntime:
                 return
 
             is_at = self._detect_at(content, username)
+            # 会话标题用：备注/昵称优先，查不到再退回 wxid。
+            display_name = self._display_name(username)
+            sender_name = self._display_name(sender_username) if sender_username else ""
             emit(
                 "message",
                 peerType=peer_type,
                 username=username,
-                displayName=username,
+                displayName=display_name,
                 senderId=sender_username,
-                senderName="",
+                senderName=sender_name,
                 content=content,
                 isAt=is_at,
                 messageType=str(msg_type or ""),
@@ -185,6 +188,16 @@ class WeChatRuntime:
             )
         except Exception as exc:  # noqa: BLE001
             log("error", f"处理消息回调异常：{exc}")
+
+    def _display_name(self, username: str) -> str:
+        """备注 > 昵称 > 群名 > wxid；失败回退 wxid，绝不让标题查询拖垮收消息。"""
+        if not username:
+            return ""
+        try:
+            name = str(self.db.get_nickname(username) or "").strip()
+            return name or username
+        except Exception:  # noqa: BLE001
+            return username
 
     def _classify(self, username: str) -> str:
         if username.endswith("@chatroom"):

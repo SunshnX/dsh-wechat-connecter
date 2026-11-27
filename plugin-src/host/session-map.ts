@@ -14,6 +14,8 @@ export interface PeerBinding {
   peerType: PeerType;
   /** Human-readable display name captured when the binding was made. */
   displayName: string;
+  /** Last auto-applied session title (avoid re-writing on every message). */
+  title?: string;
   /** Epoch ms of last activity. */
   lastSeen: number;
 }
