@@ -162,6 +162,17 @@ function apply(ctx: any, _config: unknown) {
     return "";
   }
 
+  function assistantCount(agent: any): number {
+    try {
+      const messages = agent.session.deriveMessages?.() ?? [];
+      let n = 0;
+      for (const m of messages) if (m?.role === "assistant") n += 1;
+      return n;
+    } catch {
+      return 0;
+    }
+  }
+
   function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("timeout")), ms);
@@ -187,6 +198,7 @@ function apply(ctx: any, _config: unknown) {
       const agent = handle.agent;
 
       const inboundText = buildInboundText(peerType, msg);
+      const before = assistantCount(agent);
       agent.followup({
         id: randomUUID(),
         role: "user",
@@ -201,6 +213,10 @@ function apply(ctx: any, _config: unknown) {
         logger.warn(`[${name}] ${peer} 等待回复超时，跳过本轮发送`);
         return;
       }
+
+      // Only send when the turn actually produced a new assistant message,
+      // otherwise the "last assistant message" would be a stale one.
+      if (assistantCount(agent) <= before) return;
 
       const replyText = extractLastAssistantText(agent);
       if (!replyText) return;
