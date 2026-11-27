@@ -26,6 +26,7 @@ export interface Config {
   botName: string;
   model: { provider: string; model: string };
   workspace: string;
+  scheduledDelivery: boolean;
   private: {
     enabled: boolean;
     replyStrategy: "always" | "mention";

@@ -87,6 +87,8 @@ export interface WechatConnecterConfig {
    * 都在这个目录下执行。空 = 使用默认目录（$DSH_HOME/dsh-wechat-connecter/workspace）。
    */
   workspace: string;
+  /** 定时/计划任务在绑定会话里产生的回复，也投递到微信（像 dsh-im 的 deferred delivery）。 */
+  scheduledDelivery: boolean;
   private: PrivateChatConfig;
   group: GroupChatConfig;
   humanize: HumanizeConfig;
@@ -119,6 +121,7 @@ export function defaultConfig(): WechatConnecterConfig {
     botName: "",
     model: { provider: "", model: "" },
     workspace: "",
+    scheduledDelivery: true,
     private: {
       enabled: true,
       replyStrategy: "always",

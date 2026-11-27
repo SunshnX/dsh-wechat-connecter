@@ -40,6 +40,7 @@ const Config = z
     pollInterval: z.number().default(0.5),
     botName: z.string().default(""),
     workspace: z.string().default(""),
+    scheduledDelivery: z.boolean().default(true),
     model: z
       .object({
         provider: z.string().default(""),
@@ -250,6 +251,111 @@ function apply(ctx: any, _config: unknown) {
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  /** 把一条回复按人设规则拆气泡、加打字延迟、逐条发送（微信消息与定时投递共用）。 */
+  async function sendBubbles(peer: string, replyText: string, inboundText: string, tag = "回复") {
+    const bubbles = humanizeReply(store.config, replyText, inboundText);
+    for (const bubble of bubbles) {
+      // 拟人打字延迟：按字数停顿，模拟真人逐字输入，单条消息封顶。
+      if (store.config.humanize.typingDelay) {
+        const chars = [...bubble].length;
+        const delay = Math.min(
+          chars * store.config.humanize.typingDelayPerCharMs,
+          store.config.humanize.typingDelayMaxMs,
+        );
+        if (delay > 0) await sleep(delay);
+      }
+      bridge.sendText(peer, bubble);
+      log("info", `${tag} ${peer}：${truncate(bubble)}`);      if (store.config.humanize.bubbleGapMs > 0) await sleep(store.config.humanize.bubbleGapMs);
+    }
+    lastReplied.set(peer, Date.now());
+    sessionMap.touch(peer);
+  }
+
+  // -- scheduled-task delivery ----------------------------------------------
+  // DSH 定时/计划任务触发时，会往目标会话投递一条 source.kind === 'schedule'
+  // 的用户消息，agent 随后产出回复。这条回复不属于微信入站消息，processMessage
+  // 抓不到。这里监听 session/event，把「schedule 触发且已完成」的轮次结果投递
+  // 到对应微信对端（思路同 dsh-im 的 deferred delivery）。
+  const scheduleTurns = new Map<string, Set<number>>(); // sessionId -> schedule 触发的 turn
+  const scheduleAnswers = new Map<string, string>();    // `${sessionId}:${turn}` -> 该轮最后的 assistant 文本
+  const openTurns = new Map<string, number>();          // sessionId -> 当前打开的 turn（user/message 不带 turn）
+
+  /** sessionId → 绑定的微信对端（peer）。 */
+  function peerOfSession(sessionId: string): string | undefined {
+    for (const { peer, binding } of sessionMap.list()) {
+      if (binding.sessionId === sessionId) return peer;
+    }
+    return undefined;
+  }
+
+  function onSessionEvent(session: any, event: any) {
+    if (!store.config.scheduledDelivery) return;
+    const type = event?.type;
+    // 只关心这四类事件；跳过 assistant/chunk 等高频事件，避免无谓开销。
+    if (type !== "turn/start" && type !== "user/message" && type !== "assistant/message" && type !== "turn/end") {
+      return;
+    }
+    try {
+      const sessionId = String(session?.id ?? "");
+      if (!sessionId) return;
+      const peer = peerOfSession(sessionId);
+      if (!peer) return; // 不是绑定到微信的会话
+      const data = event?.data ?? {};
+
+      if (type === "turn/start") {
+        const turn = Number(data?.turn);
+        if (Number.isFinite(turn)) openTurns.set(sessionId, turn);
+        return;
+      }
+
+      if (type === "user/message") {
+        if (data?.source?.kind !== "schedule") return;
+        // UserMessage 本身不带 turn，用当前打开的轮次。
+        const turn = Number(data?.turn ?? openTurns.get(sessionId));
+        if (!Number.isFinite(turn)) return;
+        let set = scheduleTurns.get(sessionId);
+        if (!set) {
+          set = new Set<number>();
+          scheduleTurns.set(sessionId, set);
+        }
+        set.add(turn);
+        log("info", `检测到定时任务触发（${peer}），等待 agent 回复…`);
+        return;
+      }
+
+      if (type === "assistant/message") {
+        const turn = Number(data?.turn);
+        if (!scheduleTurns.get(sessionId)?.has(turn)) return;
+        const text = (data?.message?.content ?? [])
+          .filter((b: any) => b?.type === "text")
+          .map((b: any) => b.text)
+          .join("\n")
+          .trim();
+        if (text) scheduleAnswers.set(`${sessionId}:${turn}`, text);
+        return;
+      }
+
+      // turn/end
+      const turn = Number(data?.turn);
+      if (openTurns.get(sessionId) === turn) openTurns.delete(sessionId);
+      const set = scheduleTurns.get(sessionId);
+      if (!set?.has(turn)) return;
+      set.delete(turn);
+      if (set.size === 0) scheduleTurns.delete(sessionId);
+      const key = `${sessionId}:${turn}`;
+      const text = scheduleAnswers.get(key) ?? "";
+      scheduleAnswers.delete(key);
+
+      const reason = typeof data?.reason === "string" ? data.reason : data?.reason?.kind;
+      if (reason !== "completed" || !text) return;
+      void sendBubbles(peer, text, "", "定时投递").catch((error) =>
+        logger.warn(`[${name}] 定时投递失败 (${peer}): ${String(error)}`),
+      );
+    } catch (error) {
+      logger.warn(`[${name}] 处理 session/event 失败: ${String(error)}`);
+    }
+  }
+
   // -- inbound pipeline ------------------------------------------------------
   async function processMessage(peer: string, peerType: PeerType, msg: InboundMessage) {
     try {
@@ -279,23 +385,7 @@ function apply(ctx: any, _config: unknown) {
       const replyText = extractLastAssistantText(agent);
       if (!replyText) return;
 
-      const bubbles = humanizeReply(store.config, replyText, msg.content);
-      for (const bubble of bubbles) {
-        // 拟人打字延迟：按字数停顿，模拟真人逐字输入，单条消息封顶。
-        if (store.config.humanize.typingDelay) {
-          const chars = [...bubble].length;
-          const delay = Math.min(
-            chars * store.config.humanize.typingDelayPerCharMs,
-            store.config.humanize.typingDelayMaxMs,
-          );
-          if (delay > 0) await sleep(delay);
-        }
-        bridge.sendText(peer, bubble);
-        log("info", `回复 ${peer}：${truncate(bubble)}`);
-        if (store.config.humanize.bubbleGapMs > 0) await sleep(store.config.humanize.bubbleGapMs);
-      }
-      lastReplied.set(peer, Date.now());
-      sessionMap.touch(peer);
+      await sendBubbles(peer, replyText, msg.content);
     } catch (error) {
       logger.error(`[${name}] 处理消息失败 (${peer}): ${String(error)}`);
     }
@@ -585,6 +675,25 @@ function apply(ctx: any, _config: unknown) {
     }
   } catch (error) {
     logger.warn(`[${name}] 注册管理 RPC 失败: ${String(error)}`);
+  }
+
+  // 定时任务投递：监听全局 session 事件（含所有会话，按绑定关系过滤）。
+  try {
+    if (typeof ctx.on === "function") {
+      const dispose = ctx.on("session/event", onSessionEvent, { global: true });
+      if (typeof dispose === "function") {
+        const prev = rpcDispose;
+        rpcDispose = async () => {
+          dispose();
+          await prev?.();
+        };
+      }
+      logger.info(`[${name}] 定时任务投递已启用（监听 session/event）`);
+    } else {
+      logger.warn(`[${name}] ctx.on 不可用，定时任务投递无法启用。`);
+    }
+  } catch (error) {
+    logger.warn(`[${name}] 订阅 session/event 失败: ${String(error)}`);
   }
 
   ctx.effect(() => {

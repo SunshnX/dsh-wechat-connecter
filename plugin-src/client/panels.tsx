@@ -350,6 +350,7 @@ export function WechatPanel(props: { api: Api }) {
       h("div", { className: "wc-card-title" }, "回复设置"),
       h(SettingRow, { title: "启动 DSH 自动启动桥接", desc: "打开 DSH 后自动拉起 Python 桥接进程", checked: config.autoStart, onChange: (v) => patch({ autoStart: v }) }),
       h(SettingRow, { title: "启用自动回复", desc: "关闭后插件只收不发", checked: config.enabled, onChange: (v) => patch({ enabled: v }) }),
+      h(SettingRow, { title: "定时任务投递", desc: "定时/计划任务在绑定会话里的回复也发到微信", checked: config.scheduledDelivery, onChange: (v) => patch({ scheduledDelivery: v }) }),
       h(
         "div",
         { className: "wc-field" },
