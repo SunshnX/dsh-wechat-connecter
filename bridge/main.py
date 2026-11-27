@@ -235,6 +235,21 @@ class WeChatRuntime:
                 log("error", f"发送给 {who} 失败：{exc}")
 
     def _send_front(self, who: str, text: str) -> None:
+        # 测试版 v2：移植 whale_girl 前台方案（会话名解析 + 身份硬闸 + 草稿保护 +
+        # 窗口还原）。优先走它，失败再回退下面的旧快速路径兜底。
+        try:
+            from front_send_v2 import send_front_v2
+
+            ok, reason = send_front_v2(
+                who, text, db=self.db, gui=self._get_gui(),
+                log=lambda m: log("info", m))
+            if ok:
+                log("info", f"[front] 已发送给 {who}")
+                return
+            log("warn", f"front_v2 发送失败（{reason}），回退旧快速路径")
+        except Exception as exc:  # noqa: BLE001
+            log("debug", f"front_v2 通道不可用：{exc}")
+
         gui = self._get_gui()
         # 已是当前会话则跳过 open_chat（侧栏搜索+点击+固定等待是主要耗时点）。
         try:
