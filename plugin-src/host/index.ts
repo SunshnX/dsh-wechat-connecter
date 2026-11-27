@@ -116,12 +116,32 @@ function apply(ctx: any, _config: unknown) {
     }
   };
 
+  // 默认模型路由：未显式选模型的 Session 跟随 DSH 默认模型（参考官方 ApiSessionAgentController）。
+  function agentOptions(): { provider: string; model: string; reasoningEffort?: string } | undefined {
+    try {
+      const defaults = ctx.agentDefaultModel ?? ctx.get?.("agentDefaultModel");
+      const sel = defaults?.currentSelection?.();
+      if (sel && sel.provider && sel.model) {
+        return {
+          provider: sel.provider,
+          model: sel.model,
+          ...(sel.reasoningEffort === undefined ? {} : { reasoningEffort: String(sel.reasoningEffort) }),
+        };
+      }
+    } catch (error) {
+      logger.warn(`[${name}] 读取默认模型失败: ${String(error)}`);
+    }
+    return undefined;
+  }
+
   async function getOrCreateAgent(peer: string, peerType: PeerType, displayName: string) {
+    const options = agentOptions();
     const existing = sessionMap.get(peer);
     if (existing) {
       try {
         const handle = await ctx.get("agents").resume({
           resumeSessionId: existing.sessionId,
+          agentOptions: options,
           setup,
         });
         handles.set(peer, handle);
@@ -135,6 +155,7 @@ function apply(ctx: any, _config: unknown) {
     const handle = await ctx.get("agents").create({
       sessionId,
       meta: { cwd: workspaceDir },
+      agentOptions: options,
       setup,
     });
     sessionMap.set(peer, { sessionId, peerType, displayName, lastSeen: Date.now() });
