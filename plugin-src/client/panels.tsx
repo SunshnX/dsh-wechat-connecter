@@ -6,41 +6,90 @@ import { Api, type Config, type LogLine, type SessionBinding } from "./api";
 const h = React.createElement;
 
 // ---------------------------------------------------------------------------
+// Module-level log cache: survives tab switches (component unmount/remount),
+// so the log feed keeps polling and never blanks out when navigating away.
+// ---------------------------------------------------------------------------
+const logCache: { logs: LogLine[]; lastSeq: number } = { logs: [], lastSeq: -1 };
+
+function mergeLogs(existing: LogLine[], incoming: LogLine[]): LogLine[] {
+  const bySeq = new Map<number, LogLine>();
+  for (const l of existing) bySeq.set(l.seq, l);
+  for (const l of incoming) bySeq.set(l.seq, l);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-500);
+}
+
+// ---------------------------------------------------------------------------
 // CSS
 // ---------------------------------------------------------------------------
 const CSS = `
-.wc-root{display:flex;flex-direction:column;gap:14px;font-size:13px;color:var(--dsw-alias-label-primary);width:100%;max-width:760px}
+.wc-root{display:flex;flex-direction:column;gap:16px;font-size:13px;color:var(--dsw-alias-label-primary,#e6e6e6);width:100%;max-width:760px}
 .wc-root *{box-sizing:border-box;min-width:0}
-.wc-card{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:10px;background:var(--dsw-alias-bg-layer-2)}
-.wc-card h3{margin:0;font-size:14px;font-weight:600}
-.wc-hint{font-size:12px;color:var(--dsw-alias-label-tertiary);margin:0}
+.wc-card{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:12px;background:var(--dsw-alias-bg-layer-2,rgba(255,255,255,.02))}
+.wc-card-title{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:600;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}
+.wc-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#8a8a8a);margin:0;line-height:1.6}
 .wc-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.wc-field{display:flex;flex-direction:column;gap:4px}
-.wc-label{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary)}
-.wc-input,.wc-select,.wc-textarea{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;width:100%}
-.wc-textarea{min-height:140px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.6}
-.wc-btn{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 14px;font:inherit;font-size:13px;cursor:pointer}
-.wc-btn:hover:not(:disabled){border-color:var(--dsw-alias-state-business-primary)}
-.wc-btn:disabled{opacity:.5;cursor:default}
+.wc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+.wc-btn{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.04));color:var(--dsw-alias-label-primary,#e6e6e6);border-radius:8px;padding:7px 16px;font:inherit;font-size:13px;line-height:1.4;cursor:pointer;transition:all .15s}
+.wc-btn:hover:not(:disabled){border-color:var(--dsw-alias-state-business-primary,#3964fe)}
+.wc-btn:disabled{opacity:.45;cursor:default}
 .wc-btn-primary{border-color:var(--dsw-alias-state-business-primary,#3964fe);background:var(--dsw-alias-state-business-primary,#3964fe);color:#fff}
-.wc-btn-danger{border-color:var(--dsw-alias-state-error-primary,#f85149);color:var(--dsw-alias-state-error-primary,#f85149)}
-.wc-badge{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary);border-radius:999px;padding:1px 10px;font-size:11px}
-.wc-badge-running{border-color:var(--dsw-alias-state-success-primary,#2da44e);color:var(--dsw-alias-state-success-primary,#2da44e)}
-.wc-badge-error{border-color:var(--dsw-alias-state-error-primary,#f85149);color:var(--dsw-alias-state-error-primary,#f85149)}
-.wc-check{display:inline-flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
-.wc-check input{accent-color:var(--dsw-alias-state-business-primary)}
-.wc-log{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:8px;padding:8px 10px;font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.5;height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all}
-.wc-log .error{color:var(--dsw-alias-state-error-primary,#f85149)}
+.wc-btn-primary:hover:not(:disabled){opacity:.9}
+.wc-btn-danger{border-color:transparent;background:transparent;color:var(--dsw-alias-label-tertiary,#8a8a8a);padding:5px 10px}
+.wc-btn-danger:hover:not(:disabled){color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.08)}
+
+.wc-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;padding:2px 10px;border-radius:999px;line-height:1.6}
+.wc-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.wc-badge-stopped{color:var(--dsw-alias-label-tertiary,#8a8a8a);background:rgba(138,138,138,.12)}
+.wc-badge-starting{color:#4a9eff;background:rgba(74,158,255,.12)}
+.wc-badge-running{color:var(--dsw-alias-state-success-primary,#3fb950);background:rgba(63,185,80,.12)}
+.wc-badge-error{color:var(--dsw-alias-state-error-primary,#f85149);background:rgba(248,81,73,.12)}
+
+/* 开关 */
+.wc-switch{position:relative;display:inline-block;width:38px;height:22px;flex-shrink:0;cursor:pointer}
+.wc-switch input{opacity:0;width:0;height:0}
+.wc-slider{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.08));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:999px;transition:.2s}
+.wc-slider::before{content:"";position:absolute;height:16px;width:16px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s}
+.wc-switch input:checked + .wc-slider{background:var(--dsw-alias-state-business-primary,#3964fe);border-color:var(--dsw-alias-state-business-primary,#3964fe)}
+.wc-switch input:checked + .wc-slider::before{transform:translateX(16px)}
+
+/* 设置行 */
+.wc-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:7px 0}
+.wc-setting-info{display:flex;flex-direction:column;gap:2px}
+.wc-setting-title{font-size:13px;line-height:1.5}
+.wc-setting-desc{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8a8a);line-height:1.5}
+
+/* 表单字段 */
+.wc-field{display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px}
+.wc-label{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#c9c9c9)}
+.wc-input,.wc-select,.wc-textarea{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.04));color:var(--dsw-alias-label-primary,#e6e6e6);border-radius:8px;padding:7px 11px;font:inherit;font-size:13px;width:100%;transition:border-color .15s}
+.wc-input:focus,.wc-select:focus,.wc-textarea:focus{outline:none;border-color:var(--dsw-alias-state-business-primary,#3964fe)}
+.wc-select{appearance:none;cursor:pointer}
+.wc-textarea{min-height:150px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7}
+
+/* 日志 */
+.wc-log{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));background:#0d1117;border-radius:10px;padding:10px 12px;font-family:ui-monospace,"SF Mono",Consolas,monospace;font-size:12px;line-height:1.6;height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.wc-log-line{display:block}
+.wc-log-time{color:#6e7681;margin-right:8px}
+.wc-log .error{color:#ff7b72}
 .wc-log .warn{color:#d29922}
-.wc-persona-card{display:flex;align-items:center;gap:10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 12px}
-.wc-persona-name{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wc-persona-preview{font-size:11px;color:var(--dsw-alias-label-tertiary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wc-error{font-size:12px;color:var(--dsw-alias-state-error-primary,#f85149)}
-.wc-success{font-size:12px;color:var(--dsw-alias-state-success-primary,#2da44e)}
-.wc-sessions{display:flex;flex-direction:column;gap:6px}
-.wc-session-row{display:flex;align-items:center;gap:8px;font-size:12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:6px 10px}
+
+/* 会话绑定 */
+.wc-sessions{display:flex;flex-direction:column;gap:8px}
+.wc-session-row{display:flex;align-items:center;gap:10px;font-size:12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));border-radius:8px;padding:8px 12px}
 .wc-session-peer{font-family:ui-monospace,Consolas,monospace;font-weight:600}
-.wc-session-id{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,Consolas,monospace;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-session-id{color:var(--dsw-alias-label-tertiary,#8a8a8a);font-family:ui-monospace,Consolas,monospace;font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 人设卡 */
+.wc-persona-card{display:flex;align-items:center;gap:12px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.1));border-radius:10px;padding:10px 14px}
+.wc-persona-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.wc-persona-title{display:flex;align-items:center;gap:8px}
+.wc-persona-name{font-weight:600;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-persona-preview{font-size:11px;color:var(--dsw-alias-label-tertiary,#8a8a8a);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wc-persona-actions{display:flex;align-items:center;gap:4px;flex-shrink:0}
+
+.wc-error{font-size:12px;color:var(--dsw-alias-state-error-primary,#f85149)}
+.wc-success{font-size:12px;color:var(--dsw-alias-state-success-primary,#3fb950)}
 `;
 
 function injectCss() {
@@ -53,14 +102,39 @@ function injectCss() {
     document.head.appendChild(tag);
   }
 }
+injectCss();
 
-function usePoll(cb: () => void, ms: number, active: boolean) {
+function usePoll(cb: () => void, ms: number) {
   React.useEffect(() => {
-    if (!active) return;
     cb();
     const timer = setInterval(cb, ms);
     return () => clearInterval(timer);
-  }, [cb, ms, active]);
+  }, [cb, ms]);
+}
+
+// 开关组件
+function Switch(props: { checked: boolean; onChange: (v: boolean) => void }) {
+  return h(
+    "label",
+    { className: "wc-switch" },
+    h("input", { type: "checkbox", checked: props.checked, onChange: (e: any) => props.onChange(e.target.checked) }),
+    h("span", { className: "wc-slider" }),
+  );
+}
+
+// 设置行（标题 + 可选描述 + 开关）
+function SettingRow(props: { title: string; desc?: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return h(
+    "div",
+    { className: "wc-setting" },
+    h(
+      "div",
+      { className: "wc-setting-info" },
+      h("div", { className: "wc-setting-title" }, props.title),
+      props.desc ? h("div", { className: "wc-setting-desc" }, props.desc) : null,
+    ),
+    h(Switch, { checked: props.checked, onChange: props.onChange }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -71,8 +145,8 @@ export function BridgePanel(props: { api: Api }) {
   const [status, setStatus] = React.useState<"stopped" | "starting" | "running" | "error">("stopped");
   const [lastError, setLastError] = React.useState("");
   const [config, setConfig] = React.useState<Config | null>(null);
-  const [logs, setLogs] = React.useState<LogLine[]>([]);
-  const [lastSeq, setLastSeq] = React.useState(-1);
+  const [logs, setLogs] = React.useState<LogLine[]>(logCache.logs);
+  const lastSeqRef = React.useRef<number>(logCache.lastSeq);
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<{ kind: "error" | "success"; text: string } | null>(null);
   const [depsInstalling, setDepsInstalling] = React.useState(false);
@@ -89,29 +163,33 @@ export function BridgePanel(props: { api: Api }) {
       setConfig(s.config);
       setDepsInstalling(s.depsInstalling);
     } catch {
-      /* ignore transient errors */
+      /* transient */
     }
   }, [api]);
 
   const refreshLogs = React.useCallback(async () => {
     try {
-      const r = await api.logs(lastSeq);
+      const r = await api.logs(lastSeqRef.current);
       if (r.logs.length > 0) {
-        setLogs((prev) => [...prev, ...r.logs].slice(-500));
-        setLastSeq(r.lastSeq);
+        const merged = mergeLogs(logCache.logs, r.logs);
+        logCache.logs = merged;
+        logCache.lastSeq = r.lastSeq;
+        lastSeqRef.current = r.lastSeq;
+        setLogs(merged);
       }
     } catch {
-      /* ignore */
+      /* transient */
     }
-  }, [api, lastSeq]);
+  }, [api]);
 
   React.useEffect(() => {
     void refreshStatus();
     void api.listSessions().then(setSessions).catch(() => undefined);
   }, [api, refreshStatus]);
 
-  usePoll(refreshStatus, 2000, true);
-  usePoll(refreshLogs, 1000, status === "running" || status === "starting");
+  // 始终轮询：状态与日志都持续刷新，桥接报错/退出也能实时体现。
+  usePoll(refreshStatus, 2000);
+  usePoll(refreshLogs, 1000);
 
   React.useEffect(() => {
     if (logBox.current) logBox.current.scrollTop = logBox.current.scrollHeight;
@@ -131,49 +209,33 @@ export function BridgePanel(props: { api: Api }) {
       .finally(() => setBusy(false));
   };
 
-  const patch = (p: Partial<Config>) => {
-    return api.setConfig(p).then((next) => {
-      setConfig(next);
-    });
-  };
+  const patch = (p: Partial<Config>) => api.setConfig(p).then(setConfig);
 
-  const statusBadge =
+  const badge =
     status === "running"
       ? h("span", { className: "wc-badge wc-badge-running" }, "运行中")
       : status === "starting"
-        ? h("span", { className: "wc-badge" }, "启动中")
+        ? h("span", { className: "wc-badge wc-badge-starting" }, "启动中")
         : status === "error"
           ? h("span", { className: "wc-badge wc-badge-error" }, "错误")
-          : h("span", { className: "wc-badge" }, "已停止");
+          : h("span", { className: "wc-badge wc-badge-stopped" }, "已停止");
 
   return h(
     "div",
     { className: "wc-root" },
-    // -- status / control --
+    // -- 桥接状态 --
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, "桥接状态"),
-      h("div", { className: "wc-row" }, statusBadge, lastError ? h("span", { className: "wc-error" }, lastError) : null),
+      h("div", { className: "wc-card-title" }, "桥接状态"),
+      h("div", { className: "wc-row" }, badge, lastError ? h("span", { className: "wc-error" }, lastError) : null),
       h(
         "div",
-        { className: "wc-row" },
-        h(
-          "button",
-          { className: "wc-btn wc-btn-primary", disabled: busy || status === "running" || status === "starting", onClick: () => run(() => api.start()) },
-          "启动桥接",
-        ),
+        { className: "wc-actions" },
+        h("button", { className: "wc-btn wc-btn-primary", disabled: busy || status === "running" || status === "starting", onClick: () => run(() => api.start()) }, "启动桥接"),
         h("button", { className: "wc-btn", disabled: busy || status === "stopped", onClick: () => run(() => api.stop()) }, "停止桥接"),
-        h(
-          "button",
-          { className: "wc-btn", disabled: busy || depsInstalling, onClick: () => run(() => api.checkDeps()).then(() => api.checkDeps().then(setDepsInfo)) },
-          "检查依赖",
-        ),
-        h(
-          "button",
-          { className: "wc-btn", disabled: busy || depsInstalling, onClick: () => run(() => api.installDeps()) },
-          depsInstalling ? "安装中…" : "安装依赖",
-        ),
+        h("button", { className: "wc-btn", disabled: busy || depsInstalling, onClick: () => run(() => api.checkDeps().then(setDepsInfo)) }, "检查依赖"),
+        h("button", { className: "wc-btn", disabled: busy || depsInstalling, onClick: () => run(() => api.installDeps()) }, depsInstalling ? "安装中…" : "安装依赖"),
         notice ? h("span", { className: notice.kind === "error" ? "wc-error" : "wc-success" }, notice.text) : null,
       ),
       depsInfo
@@ -181,64 +243,68 @@ export function BridgePanel(props: { api: Api }) {
         : null,
     ),
 
-    // -- reply settings --
+    // -- 回复设置 --
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, "回复设置"),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.enabled, onChange: (e: any) => patch({ enabled: e.target.checked }) }),
-        h("span", null, "启用自动回复")),
-      h("label", { className: "wc-field" },
+      h("div", { className: "wc-card-title" }, "回复设置"),
+      h(SettingRow, { title: "启用自动回复", desc: "关闭后插件只收不发", checked: config.enabled, onChange: (v) => patch({ enabled: v }) }),
+      h(
+        "div",
+        { className: "wc-field" },
         h("span", { className: "wc-label" }, "发送通道"),
-        h("select", { className: "wc-select", value: config.sendMode, onChange: (e: any) => patch({ sendMode: e.target.value }) },
+        h(
+          "select",
+          { className: "wc-select", value: config.sendMode, onChange: (e: any) => patch({ sendMode: e.target.value }) },
           h("option", { value: "auto" }, "自动（后台失败回退前台）"),
           h("option", { value: "front" }, "前台 UIA"),
-          h("option", { value: "bg" }, "后台 PostMessage"))),
-      h("label", { className: "wc-field" },
-        h("span", { className: "wc-label" }, "机器人昵称（用于点名/判断 @）"),
-        h("input", { className: "wc-input", value: config.botName, placeholder: "小鲸", onChange: (e: any) => patch({ botName: e.target.value }) })),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.private.enabled, onChange: (e: any) => patch({ private: { ...config.private, enabled: e.target.checked } } as any) }),
-        h("span", null, "私聊回复")),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.group.enabled, onChange: (e: any) => patch({ group: { ...config.group, enabled: e.target.checked } } as any) }),
-        h("span", null, "群聊回复")),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.group.requireAt, onChange: (e: any) => patch({ group: { ...config.group, requireAt: e.target.checked } } as any) }),
-        h("span", null, "群聊需 @ / 点名才回复")),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.humanize.splitLongReply, onChange: (e: any) => patch({ humanize: { ...config.humanize, splitLongReply: e.target.checked } } as any) }),
-        h("span", null, "长回复拆成多条短气泡")),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.humanize.stripTrailingPunct, onChange: (e: any) => patch({ humanize: { ...config.humanize, stripTrailingPunct: e.target.checked } } as any) }),
-        h("span", null, "去掉句尾标点")),
-      h("label", { className: "wc-check" },
-        h("input", { type: "checkbox", checked: config.humanize.dedupeRepeat, onChange: (e: any) => patch({ humanize: { ...config.humanize, dedupeRepeat: e.target.checked } } as any) }),
-        h("span", null, "反鹦鹉学舌去重")),
+          h("option", { value: "bg" }, "后台 PostMessage"),
+        ),
+      ),
+      h(
+        "div",
+        { className: "wc-field" },
+        h("span", { className: "wc-label" }, "机器人昵称（用于判断 @ / 点名）"),
+        h("input", { className: "wc-input", value: config.botName, placeholder: "小鲸", onChange: (e: any) => patch({ botName: e.target.value }) }),
+      ),
+      h(SettingRow, { title: "私聊回复", checked: config.private.enabled, onChange: (v) => patch({ private: { ...config.private, enabled: v } } as any) }),
+      h(SettingRow, { title: "群聊回复", checked: config.group.enabled, onChange: (v) => patch({ group: { ...config.group, enabled: v } } as any) }),
+      h(SettingRow, { title: "群聊需 @ / 点名才回复", checked: config.group.requireAt, onChange: (v) => patch({ group: { ...config.group, requireAt: v } } as any) }),
+      h(SettingRow, { title: "长回复拆成多条短气泡", desc: "像真人发微信一样分段", checked: config.humanize.splitLongReply, onChange: (v) => patch({ humanize: { ...config.humanize, splitLongReply: v } } as any) }),
+      h(SettingRow, { title: "去掉句尾标点", checked: config.humanize.stripTrailingPunct, onChange: (v) => patch({ humanize: { ...config.humanize, stripTrailingPunct: v } } as any) }),
+      h(SettingRow, { title: "反鹦鹉学舌去重", desc: "不重复对方原话", checked: config.humanize.dedupeRepeat, onChange: (v) => patch({ humanize: { ...config.humanize, dedupeRepeat: v } } as any) }),
     ),
 
-    // -- update --
+    // -- 更新 --
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, "更新"),
-      h("div", { className: "wc-row" },
-        h("button", { className: "wc-btn", disabled: busy, onClick: () => run(() => api.checkUpdate().then((r) => { setUpdateResult(r); })) }, "检查更新"),
-        updateResult ? h("span", { className: updateResult.hasUpdate ? "wc-error" : "wc-success" }, updateResult.message) : null),
-      updateResult ? h("p", { className: "wc-hint" }, `当前 ${updateResult.currentVersion} ｜ 最新 ${updateResult.latestVersion ?? "—"}`) : null,
+      h("div", { className: "wc-card-title" }, "更新"),
+      h(
+        "div",
+        { className: "wc-actions" },
+        h("button", { className: "wc-btn", disabled: busy, onClick: () => run(() => api.checkUpdate().then((r) => setUpdateResult(r))) }, "检查更新"),
+        updateResult ? h("span", { className: updateResult.hasUpdate ? "wc-error" : "wc-success" }, updateResult.message) : null,
+      ),
+      updateResult
+        ? h("p", { className: "wc-hint" }, `当前 ${updateResult.currentVersion} ｜ 最新 ${updateResult.latestVersion ?? "—"}${updateResult.url ? ` ｜ ${updateResult.url}` : ""}`)
+        : null,
     ),
 
-    // -- sessions --
+    // -- 会话绑定 --
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, `会话绑定（${sessions.length}）`),
+      h("div", { className: "wc-card-title" }, `会话绑定（${sessions.length}）`),
       sessions.length === 0
         ? h("p", { className: "wc-hint" }, "还没有微信对端绑定到 DSH 会话。收到消息后会自动建立绑定。")
-        : h("div", { className: "wc-sessions" },
+        : h(
+            "div",
+            { className: "wc-sessions" },
             sessions.map((s) =>
-              h("div", { className: "wc-session-row", key: s.peer },
+              h(
+                "div",
+                { className: "wc-session-row", key: s.peer },
                 h("span", { className: "wc-session-peer" }, s.peer),
                 h("span", { className: "wc-session-id" }, s.binding.sessionId),
                 h("button", { className: "wc-btn wc-btn-danger", onClick: () => api.unbindSession(s.peer).then(setSessions) }, "解绑"),
@@ -247,21 +313,42 @@ export function BridgePanel(props: { api: Api }) {
           ),
     ),
 
-    // -- logs --
+    // -- 实时日志 --
     h(
       "div",
       { className: "wc-card" },
-      h("div", { className: "wc-row" },
-        h("h3", null, "实时日志"),
-        h("button", { className: "wc-btn", onClick: () => setLogs([]) }, "清空")),
-      h("div", { className: "wc-log", ref: logBox },
-        logs.map((l) =>
-          h("div", { className: l.level === "error" ? "error" : l.level === "warn" ? "warn" : "", key: l.seq },
-            `[${new Date(l.time).toLocaleTimeString()}] ${l.text}`),
+      h(
+        "div",
+        { className: "wc-card-title", style: { justifyContent: "space-between" } },
+        "实时日志",
+        h(
+          "div",
+          { className: "wc-actions" },
+          h("button", { className: "wc-btn", onClick: () => { logCache.logs = []; setLogs([]); } }, "清空"),
         ),
+      ),
+      h(
+        "div",
+        { className: "wc-log", ref: logBox },
+        logs.length === 0
+          ? h("span", { className: "wc-log-line", style: { color: "#6e7681" } }, "暂无日志。启动桥接后会在这里实时显示。")
+          : logs.map((l) =>
+              h(
+                "div",
+                { className: "wc-log-line" + (l.level === "error" ? " error" : l.level === "warn" ? " warn" : ""), key: l.seq },
+                h("span", { className: "wc-log-time" }, `[${fmtTime(l.time)}]`),
+                l.text,
+              ),
+            ),
       ),
     ),
   );
+}
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,14 +382,8 @@ export function PersonaPanel(props: { api: Api }) {
 
   const save = () => {
     const trimmed = name.trim();
-    if (!trimmed) {
-      setError("人设名不能为空");
-      return;
-    }
-    if (!content.trim()) {
-      setError("人设内容不能为空");
-      return;
-    }
+    if (!trimmed) return setError("人设名不能为空");
+    if (!content.trim()) return setError("人设内容不能为空");
     setError(null);
     api.savePersona(trimmed, content).then(() => {
       setNotice(`已保存「${trimmed}」`);
@@ -328,42 +409,72 @@ export function PersonaPanel(props: { api: Api }) {
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, editing ? `编辑人设「${editing}」` : "新建人设"),
-      h("label", { className: "wc-field" },
+      h("div", { className: "wc-card-title" }, editing ? `编辑人设「${editing}」` : "新建人设"),
+      h(
+        "div",
+        { className: "wc-field" },
         h("span", { className: "wc-label" }, "名称"),
-        h("input", { className: "wc-input", value: name, placeholder: "小鲸", onChange: (e: any) => setName(e.target.value) })),
-      h("label", { className: "wc-field" },
+        h("input", { className: "wc-input", value: name, placeholder: "小鲸", onChange: (e: any) => setName(e.target.value) }),
+      ),
+      h(
+        "div",
+        { className: "wc-field" },
         h("span", { className: "wc-label" }, "内容（Markdown）"),
-        h("textarea", { className: "wc-textarea", value: content, onChange: (e: any) => setContent(e.target.value) })),
-      h("div", { className: "wc-row" },
+        h("textarea", { className: "wc-textarea", value: content, onChange: (e: any) => setContent(e.target.value) }),
+      ),
+      h(
+        "div",
+        { className: "wc-actions" },
         h("button", { className: "wc-btn wc-btn-primary", onClick: save }, "保存"),
-        editing ? h("button", { className: "wc-btn", onClick: () => { setEditing(null); setName(""); setContent(""); } }, "取消编辑") : null,
+        editing
+          ? h("button", { className: "wc-btn", onClick: () => { setEditing(null); setName(""); setContent(""); } }, "取消编辑")
+          : null,
         notice ? h("span", { className: "wc-success" }, notice) : null,
-        error ? h("span", { className: "wc-error" }, error) : null),
+        error ? h("span", { className: "wc-error" }, error) : null,
+      ),
     ),
 
     h(
       "div",
       { className: "wc-card" },
-      h("h3", null, "人设卡"),
+      h("div", { className: "wc-card-title" }, "人设卡"),
       names.length === 0
         ? h("p", { className: "wc-hint" }, "还没有人设卡，先在上面新建一个。")
         : h(
             "div",
             { className: "wc-sessions" },
             names.map((n) =>
-              h("div", { className: "wc-persona-card", key: n },
-                h("span", { className: "wc-persona-name" }, n),
-                persona.active === n ? h("span", { className: "wc-badge wc-badge-running" }, "当前") : null,
-                h("span", { className: "wc-persona-preview" }, (cards[n] ?? "").split("\n").filter(Boolean)[0] ?? ""),
-                persona.active === n
-                  ? null
-                  : h("button", { className: "wc-btn", onClick: () => api.setActivePersona(n).then(refresh) }, "启用"),
-                h("button", { className: "wc-btn", onClick: () => startEdit(n) }, "编辑"),
-                h("button", { className: "wc-btn wc-btn-danger", onClick: () => { if (window.confirm(`删除人设「${n}」？`)) api.deletePersona(n).then(refresh); } }, "删除"),
+              h(
+                "div",
+                { className: "wc-persona-card", key: n },
+                h(
+                  "div",
+                  { className: "wc-persona-main" },
+                  h(
+                    "div",
+                    { className: "wc-persona-title" },
+                    h("span", { className: "wc-persona-name" }, n),
+                    persona.active === n ? h("span", { className: "wc-badge wc-badge-running" }, "当前") : null,
+                  ),
+                  h("div", { className: "wc-persona-preview" }, firstLine(cards[n])),
+                ),
+                h(
+                  "div",
+                  { className: "wc-persona-actions" },
+                  persona.active === n
+                    ? null
+                    : h("button", { className: "wc-btn", onClick: () => api.setActivePersona(n).then(refresh) }, "启用"),
+                  h("button", { className: "wc-btn", onClick: () => startEdit(n) }, "编辑"),
+                  h("button", { className: "wc-btn wc-btn-danger", onClick: () => { if (window.confirm(`删除人设「${n}」？`)) api.deletePersona(n).then(refresh); } }, "删除"),
+                ),
               ),
             ),
           ),
     ),
   );
+}
+
+function firstLine(md: string): string {
+  const line = (md ?? "").split("\n").find((l) => l.trim() && !l.trim().startsWith("#"));
+  return line ? line.trim().slice(0, 60) : "";
 }

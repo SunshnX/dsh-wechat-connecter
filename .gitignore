@@ -14,3 +14,7 @@ state.json
 
 # WorkBuddy 内部目录
 .workbuddy/
+
+# Python
+__pycache__/
+*.pyc

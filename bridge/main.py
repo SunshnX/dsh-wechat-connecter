@@ -65,7 +65,13 @@ def main() -> int:
 
     log("info", "桥接启动，正在导入 wechatauto…")
     try:
-        from wechatauto import WeChatDB, Listener, quick_send, WeChatGUI
+        from wechatauto import WeChatDB, quick_send, WeChatGUI
+        # 注意：顶层 `wechatauto.Listener` 是 wx.Listener（空抽象基类，不接受参数）；
+        # 真正从本地数据库轮询消息的监听器在 `wechatauto.db.Listener`。
+        try:
+            from wechatauto.db import Listener
+        except ImportError:
+            from wechatauto import Listener
     except Exception as exc:  # noqa: BLE001
         log("error", f"导入 wechatauto 失败：{exc}")
         log("error", "请在管理页点击「安装依赖」，或手动执行：pip install wechatauto-replica==1.3.0.2")
@@ -127,7 +133,11 @@ class WeChatRuntime:
 
     # -- receive -----------------------------------------------------------
     def start_listener(self, interval: float = 0.5) -> None:
-        from wechatauto import Listener
+        # 真正的 DB 监听器在 wechatauto.db.Listener（顶层 wechatauto.Listener 是空抽象基类）。
+        try:
+            from wechatauto.db import Listener
+        except ImportError:
+            from wechatauto import Listener
 
         listener = Listener(self.db, interval=interval)
         listener.add_all(self._on_message, discover=True)
