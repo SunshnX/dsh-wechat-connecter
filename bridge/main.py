@@ -15,7 +15,7 @@ Protocol with the Node host (newline-delimited JSON):
     {"event": "log", "level": "info|warn|error", "text": "..."}
 
   Node -> Python (stdin):
-    {"type": "send", "who": "wxid_xxx", "text": "hello", "mode": "auto"}
+    {"type": "send", "who": "wxid_xxx", "text": "hello"}
     {"type": "stop"}
 
 All structured output is flushed line-by-line. Unstructured output (tracebacks,
@@ -108,11 +108,10 @@ def main() -> int:
             if cmd_type == "send":
                 who = str(cmd.get("who", ""))
                 text = str(cmd.get("text", ""))
-                mode = str(cmd.get("mode", send_mode))
                 if not who or not text:
                     log("warn", "send 命令缺少 who/text")
                     continue
-                runtime.send_text(who, text, mode)
+                runtime.send_text(who, text)
     except KeyboardInterrupt:
         pass
     finally:
@@ -204,7 +203,7 @@ class WeChatRuntime:
         return False
 
     # -- send --------------------------------------------------------------
-    def send_text(self, who: str, text: str, mode: str = "bg") -> None:
+    def send_text(self, who: str, text: str) -> None:
         """发送一条消息。仅保留后台零焦点通道（bg_send_v2），不再回退前台 UIA。"""
         with self._send_lock:
             try:
