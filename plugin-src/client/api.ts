@@ -25,6 +25,7 @@ export interface Config {
   pollInterval: number;
   botName: string;
   model: { provider: string; model: string };
+  workspace: string;
   private: {
     enabled: boolean;
     replyStrategy: "always" | "mention";
@@ -84,6 +85,12 @@ export interface ModelListResult {
   groups: ModelGroup[];
   current: { provider: string; model: string };
   selected: { provider: string; model: string };
+}
+
+export interface WorkspaceInfo {
+  custom: string;
+  effective: string;
+  default: string;
 }
 
 export interface SessionBinding {
@@ -155,5 +162,11 @@ export class Api {
   }
   listModels(): Promise<ModelListResult> {
     return this.call("model.list");
+  }
+  workspaceInfo(): Promise<WorkspaceInfo> {
+    return this.call("workspace.info");
+  }
+  setWorkspace(workspace: string): Promise<WorkspaceInfo> {
+    return this.call("workspace.set", { workspace });
   }
 }

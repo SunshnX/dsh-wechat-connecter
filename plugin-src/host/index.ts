@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 
@@ -39,6 +39,7 @@ const Config = z
     pythonPath: z.string().default(""),
     pollInterval: z.number().default(0.5),
     botName: z.string().default(""),
+    workspace: z.string().default(""),
     model: z
       .object({
         provider: z.string().default(""),
@@ -96,12 +97,18 @@ const Config = z
 function apply(ctx: any, _config: unknown) {
   const logger = (ctx.logger ? ctx.logger(name) : null) ?? console;
   const dataDir = join(resolveDshHome(), name);
-  const workspaceDir = join(dataDir, "workspace");
+  const defaultWorkspaceDir = join(dataDir, "workspace");
   mkdirSync(dataDir, { recursive: true });
-  mkdirSync(workspaceDir, { recursive: true });
+  mkdirSync(defaultWorkspaceDir, { recursive: true });
 
   const store = createConfigStore(dataDir);
   const sessionMap: SessionMapStore = createSessionMapStore(dataDir);
+
+  // 有效工作区：自定义目录（绝对路径）优先，否则回退默认目录。
+  function resolveWorkspace(): string {
+    const custom = (store.config.workspace ?? "").trim();
+    return custom && isAbsolute(custom) ? resolve(custom) : defaultWorkspaceDir;
+  }
 
   const bridge = new BridgeProcess(store.config);
   const handles = new Map<string, { agent: any; dispose(): Promise<void> }>();
@@ -175,9 +182,11 @@ function apply(ctx: any, _config: unknown) {
     }
     // 3. 新建会话。
     const sessionId = randomUUID();
+    const cwd = resolveWorkspace();
+    mkdirSync(cwd, { recursive: true });
     const handle = await agents.create({
       sessionId,
-      meta: { cwd: workspaceDir },
+      meta: { cwd },
       agentOptions: options,
       setup,
     });
@@ -389,8 +398,44 @@ function apply(ctx: any, _config: unknown) {
           return { ok: true, value: store.config };
         }
         case "config.set": {
-          const next = store.patch(payload?.patch ?? {});
+          const patch = payload?.patch ?? {};
+          // 工作区若提供则必须是绝对路径（或空=默认）。
+          if ("workspace" in patch) {
+            const w = String(patch.workspace ?? "").trim();
+            if (w && !isAbsolute(w)) return fail("workspace-not-absolute", "工作区必须是绝对路径，或留空使用默认目录。");
+          }
+          const next = store.patch(patch);
           return { ok: true, value: next };
+        }
+        case "workspace.info": {
+          return {
+            ok: true,
+            value: {
+              custom: (store.config.workspace ?? "").trim(),
+              effective: resolveWorkspace(),
+              default: defaultWorkspaceDir,
+            },
+          };
+        }
+        case "workspace.set": {
+          const w = String(payload?.workspace ?? "").trim();
+          if (w && !isAbsolute(w)) return fail("workspace-not-absolute", "工作区必须是绝对路径，或留空使用默认目录。");
+          if (w) {
+            try {
+              mkdirSync(resolve(w), { recursive: true });
+            } catch (error) {
+              return fail("workspace-create-failed", `无法创建目录 ${w}：${String(error)}`);
+            }
+          }
+          store.patch({ workspace: w });
+          return {
+            ok: true,
+            value: {
+              custom: w,
+              effective: resolveWorkspace(),
+              default: defaultWorkspaceDir,
+            },
+          };
         }
         case "persona.save": {
           const cardName = String(payload?.name ?? "").trim();

@@ -1,6 +1,6 @@
 {
   "name": "dsh-wechat-connecter",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "把微信变成 DeepSeek Harness 的聊天客户端：本地 Python 桥接收发微信消息，每个微信对端对应一个 DSH agent 会话，内置人设系统与 DSH 管理页卡片。",
   "type": "module",
   "main": "./lib/index.js",

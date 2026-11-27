@@ -1,7 +1,7 @@
 // Browser half — combined management page (bridge + persona + model).
 
 import * as React from "react";
-import { Api, type Config, type LogLine, type ModelListResult, type SessionBinding } from "./api";
+import { Api, type Config, type LogLine, type ModelListResult, type SessionBinding, type WorkspaceInfo } from "./api";
 
 const h = React.createElement;
 
@@ -169,6 +169,11 @@ export function WechatPanel(props: { api: Api }) {
   const [models, setModels] = React.useState<ModelListResult | null>(null);
   const logBox = React.useRef<HTMLDivElement | null>(null);
 
+  // -- workspace state --
+  const [workspaceInfo, setWorkspaceInfo] = React.useState<WorkspaceInfo | null>(null);
+  const [workspaceInput, setWorkspaceInput] = React.useState("");
+  const [workspaceNotice, setWorkspaceNotice] = React.useState<{ kind: "error" | "success"; text: string } | null>(null);
+
   // -- persona state --
   const [personaName, setPersonaName] = React.useState("");
   const [personaContent, setPersonaContent] = React.useState("");
@@ -207,6 +212,10 @@ export function WechatPanel(props: { api: Api }) {
     void refreshStatus();
     void api.listSessions().then(setSessions).catch(() => undefined);
     void api.listModels().then(setModels).catch(() => undefined);
+    void api.workspaceInfo().then((info) => {
+      setWorkspaceInfo(info);
+      setWorkspaceInput(info.custom);
+    }).catch(() => undefined);
   }, [api, refreshStatus]);
 
   usePoll(refreshStatus, 2000);
@@ -264,6 +273,30 @@ export function WechatPanel(props: { api: Api }) {
   const persona = config.persona ?? {};
   const cards = persona.cards ?? {};
   const cardNames = Object.keys(cards).sort();
+
+  // -- workspace --
+  const applyWorkspace = () => {
+    setWorkspaceNotice(null);
+    api.setWorkspace(workspaceInput)
+      .then((info) => {
+        setWorkspaceInfo(info);
+        setWorkspaceInput(info.custom);
+        setWorkspaceNotice({ kind: "success", text: `已应用：${info.effective}` });
+        void refreshStatus();
+      })
+      .catch((e) => setWorkspaceNotice({ kind: "error", text: String(e?.message ?? e) }));
+  };
+  const resetWorkspace = () => {
+    setWorkspaceNotice(null);
+    api.setWorkspace("")
+      .then((info) => {
+        setWorkspaceInfo(info);
+        setWorkspaceInput("");
+        setWorkspaceNotice({ kind: "success", text: "已恢复默认工作区" });
+        void refreshStatus();
+      })
+      .catch((e) => setWorkspaceNotice({ kind: "error", text: String(e?.message ?? e) }));
+  };
 
   const savePersona = () => {
     const trimmed = personaName.trim();
@@ -358,6 +391,40 @@ export function WechatPanel(props: { api: Api }) {
       h(SettingRow, { title: "长回复拆成多条短气泡", desc: "像真人发微信一样分段", checked: config.humanize.splitLongReply, onChange: (v) => patch({ humanize: { ...config.humanize, splitLongReply: v } } as any) }),
       h(SettingRow, { title: "去掉句尾标点", checked: config.humanize.stripTrailingPunct, onChange: (v) => patch({ humanize: { ...config.humanize, stripTrailingPunct: v } } as any) }),
       h(SettingRow, { title: "反鹦鹉学舌去重", desc: "不重复对方原话", checked: config.humanize.dedupeRepeat, onChange: (v) => patch({ humanize: { ...config.humanize, dedupeRepeat: v } } as any) }),
+    ),
+
+    // -- 工作区 --
+    h(
+      "div",
+      { className: "wc-card" },
+      h("div", { className: "wc-card-title" }, "工作区"),
+      h(
+        "div",
+        { className: "wc-field" },
+        h("span", { className: "wc-label" }, "自定义工作区目录（绝对路径，留空 = 默认）"),
+        h("input", {
+          className: "wc-input",
+          value: workspaceInput,
+          placeholder: workspaceInfo?.default ?? "",
+          spellCheck: false,
+          onChange: (e: any) => setWorkspaceInput(e.target.value),
+          onKeyDown: (e: any) => { if (e.key === "Enter") applyWorkspace(); },
+        }),
+      ),
+      h(
+        "div",
+        { className: "wc-actions" },
+        h("button", { className: "wc-btn wc-btn-primary", onClick: applyWorkspace }, "应用"),
+        h("button", { className: "wc-btn", onClick: resetWorkspace }, "恢复默认"),
+        workspaceNotice ? h("span", { className: workspaceNotice.kind === "error" ? "wc-error" : "wc-success" }, workspaceNotice.text) : null,
+      ),
+      h(
+        "p",
+        { className: "wc-hint" },
+        `当前生效：${workspaceInfo?.effective ?? "…"}` +
+        (workspaceInfo?.custom ? "" : `（默认）`) +
+        ` ｜ 微信对端新建会话会在此目录下运行；修改只影响之后新建的会话，已有会话保持原目录。`,
+      ),
     ),
 
     // -- 更新 --

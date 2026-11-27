@@ -76,6 +76,11 @@ export interface WechatConnecterConfig {
   botName: string;
   /** 模型路由：空 = 跟随默认模型。 */
   model: ModelConfig;
+  /**
+   * 自定义工作区目录（绝对路径）：微信对端新建会话的 cwd，agent 的文件/命令
+   * 都在这个目录下执行。空 = 使用默认目录（$DSH_HOME/dsh-wechat-connecter/workspace）。
+   */
+  workspace: string;
   private: PrivateChatConfig;
   group: GroupChatConfig;
   humanize: HumanizeConfig;
@@ -107,6 +112,7 @@ export function defaultConfig(): WechatConnecterConfig {
     pollInterval: 0.5,
     botName: "",
     model: { provider: "", model: "" },
+    workspace: "",
     private: {
       enabled: true,
       replyStrategy: "always",
