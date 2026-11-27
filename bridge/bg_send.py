@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Best-effort background (zero-focus) send channel.
+"""后台（零焦点）发送通道 —— 尽力而为。
 
-WeChat 4.x renders with Qt and does not expose a stable Win32 edit control, so a
-fully reliable zero-focus send is hard. This module provides a *best-effort*
-background path:
+思路：通过 wechatauto 的 UIA driver 打开目标会话并拿到聊天输入框的 UIA 元素，
+再用 `PostMessageW(WM_CHAR)` 把文本逐字符投递到输入框的原生窗口句柄，最后
+`PostMessageW(WM_KEYDOWN/UP, VK_RETURN)` 发送——全程不抢前台焦点、不模拟键盘。
 
-  1. Open the target chat and focus the input using the UIA driver, then
-  2. Type the text with `PostMessageW(WM_CHAR)` instead of `SendInput`, so no
-     keyboard hook steals the user's focus mid-type, and
-  3. Send with `PostMessageW(WM_KEYDOWN/UP, VK_RETURN)`.
-
-Any failure returns `False` so the caller falls back to the foreground UIA
-channel. This is intentionally conservative: it never blocks or half-sends.
+注意：微信 4.x 用 Qt 自绘，输入框的原生句柄可能并非独立 HWND（Qt 控件通常不
+创建真实子窗口）。因此本通道是「尽力而为」：任何一步失败都会返回 False，由调用
+方回退到前台 UIA 通道。
 """
 
 from __future__ import annotations
@@ -25,51 +21,47 @@ WM_CHAR = 0x0102
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 VK_RETURN = 0x0D
-WM_SETTEXT = 0x000C
 
 
-def _find_input_hwnd(gui) -> int | None:
-    """Locate a usable chat-input HWND through the UIA driver."""
+def _hwnd_of(element) -> int | None:
+    """从 UIA 元素提取原生窗口句柄。"""
     try:
-        box = getattr(gui, "focus_input", None)
-        if box is None:
-            return None
-        if not box():
-            return None
-        # focus_input returns a bounding box on some versions; try to discover
-        # the focused element's native HWND from the UIA element.
-        uia = gui._get_uia()  # noqa: SLF001
-        if uia is None:
-            return None
-        element = getattr(uia, "_input_element", None)
-        if element is None:
-            return None
-        hwnd = getattr(element, "CurrentNativeWindowHandle", None)
-        return int(hwnd) if hwnd else None
+        hwnd = int(element.NativeWindowHandle)
+        if hwnd:
+            return hwnd
     except Exception:  # noqa: BLE001
-        return None
+        pass
+    try:
+        hwnd = int(element.GetTopLevelControl().NativeWindowHandle)
+        if hwnd:
+            return hwnd
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def _post_text(hwnd: int, text: str) -> bool:
+    """逐字符投递 WM_CHAR（微信 4.2 起 wParam 按 UTF-16 码元解释，含 emoji 代理对）。"""
     for ch in text:
-        for unit in ch:  # handles surrogate pairs (emoji)
+        for unit in ch:  # 处理 surrogate pair（emoji 等）
             if not user32.PostMessageW(hwnd, WM_CHAR, ord(unit), 0):
                 return False
     return True
 
 
-def send_background(who: str, text: str) -> bool:
-    """Send `text` to `who` without stealing focus. Returns False on any
-    failure (caller should fall back to the foreground channel)."""
+def send_background(gui, who: str, text: str) -> bool:
+    """后台发送 `text` 给 `who`。失败返回 False，调用方回退前台通道。"""
     try:
-        from wechatauto import WeChatGUI  # noqa: PLC0415
-
-        gui = WeChatGUI()
         uia = gui._get_uia()  # noqa: SLF001
-        if uia is None or not uia.open_chat(who):
+        if uia is None:
             return False
-        hwnd = _find_input_hwnd(gui)
-        if hwnd is None:
+        if not uia.open_chat(who):
+            return False
+        element = uia._chat_input()  # noqa: SLF001
+        if element is None:
+            return False
+        hwnd = _hwnd_of(element)
+        if not hwnd:
             return False
         if not _post_text(hwnd, text):
             return False

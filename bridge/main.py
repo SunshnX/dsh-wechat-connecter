@@ -205,6 +205,22 @@ class WeChatRuntime:
         return False
 
     # -- send --------------------------------------------------------------
+    def _get_gui(self):
+        """复用单个 WeChatGUI 实例：其内部缓存了「当前会话 + 输入框」，连续发送
+        同一会话时走快速路径，不再每条重新搜索输入框（拆分多条气泡时尤其明显）。"""
+        if self._gui is None:
+            from wechatauto import WeChatGUI
+
+            self._gui = WeChatGUI()
+            # 加速节奏：缩短打字/休眠间隔，提升连续发送吞吐。
+            try:
+                from wechatauto import rhythm
+
+                rhythm.set_profile("fast")
+            except Exception:  # noqa: BLE001
+                pass
+        return self._gui
+
     def send_text(self, who: str, text: str, mode: str = "auto") -> None:
         with self._send_lock:
             try:
@@ -219,10 +235,9 @@ class WeChatRuntime:
                 log("error", f"发送给 {who} 失败：{exc}")
 
     def _send_front(self, who: str, text: str) -> None:
-        from wechatauto import quick_send
-
-        resp = quick_send(text, who, verify=False)
-        ok = bool(getattr(resp, "success", False) or getattr(resp, "ok", False))
+        gui = self._get_gui()
+        resp = gui.send_msg(text, who, verify=False)
+        ok = bool(getattr(resp, "is_success", False) or resp)
         if ok:
             log("info", f"[front] 已发送给 {who}")
         else:
@@ -232,7 +247,7 @@ class WeChatRuntime:
         try:
             from bg_send import send_background  # noqa: PLC0415
 
-            return send_background(who, text)
+            return send_background(self._get_gui(), who, text)
         except Exception as exc:  # noqa: BLE001
             log("debug", f"后台发送通道不可用：{exc}")
             return False

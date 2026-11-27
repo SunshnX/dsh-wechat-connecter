@@ -29,6 +29,7 @@ const CSS = `
 .wc-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#8a8a8a);margin:0;line-height:1.6}
 .wc-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .wc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wc-autoscroll{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--dsw-alias-label-secondary,#c9c9c9);cursor:pointer}
 
 .wc-btn{border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));background:var(--dsw-alias-bg-layer-3,rgba(255,255,255,.04));color:var(--dsw-alias-label-primary,#e6e6e6);border-radius:8px;padding:7px 16px;font:inherit;font-size:13px;line-height:1.4;cursor:pointer;transition:all .15s}
 .wc-btn:hover:not(:disabled){border-color:var(--dsw-alias-state-business-primary,#3964fe)}
@@ -158,6 +159,7 @@ export function WechatPanel(props: { api: Api }) {
   const [config, setConfig] = React.useState<Config | null>(null);
   const [logs, setLogs] = React.useState<LogLine[]>(logCache.logs);
   const lastSeqRef = React.useRef<number>(logCache.lastSeq);
+  const [autoScroll, setAutoScroll] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [notice, setNotice] = React.useState<{ kind: "error" | "success"; text: string } | null>(null);
   const [depsInstalling, setDepsInstalling] = React.useState(false);
@@ -211,8 +213,14 @@ export function WechatPanel(props: { api: Api }) {
   usePoll(refreshLogs, 1000);
 
   React.useEffect(() => {
-    if (logBox.current) logBox.current.scrollTop = logBox.current.scrollHeight;
-  }, [logs]);
+    const box = logBox.current;
+    if (box && autoScroll) {
+      // 用 rAF 确保在 DOM 提交后再滚动到底，避免读到旧 scrollHeight。
+      requestAnimationFrame(() => {
+        box.scrollTop = box.scrollHeight;
+      });
+    }
+  }, [logs, autoScroll]);
 
   if (!config) return h("div", { className: "wc-root" }, h("p", { className: "wc-hint" }, "加载中…"));
 
@@ -463,6 +471,12 @@ export function WechatPanel(props: { api: Api }) {
         h(
           "div",
           { className: "wc-actions" },
+          h(
+            "label",
+            { className: "wc-autoscroll", title: "新日志自动滚动到底部" },
+            h("span", null, "自动滚动"),
+            h(Switch, { checked: autoScroll, onChange: setAutoScroll }),
+          ),
           h("button", { className: "wc-btn", onClick: () => { logCache.logs = []; setLogs([]); } }, "清空"),
         ),
       ),
