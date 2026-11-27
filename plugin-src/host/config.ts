@@ -32,7 +32,7 @@ export interface HumanizeConfig {
   /** 长回复拆成多条短气泡。 */
   splitLongReply: boolean;
   maxBubbleChars: number;
-  /** 去掉句尾标点。 */
+  /** 仅去掉句尾句号（其他标点保留）。 */
   stripTrailingPunct: boolean;
   /** 反鹦鹉学舌去重（去掉复述对方原话的句子）。 */
   dedupeRepeat: boolean;

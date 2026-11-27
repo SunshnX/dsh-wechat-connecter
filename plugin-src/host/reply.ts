@@ -38,9 +38,9 @@ export function shouldReply(config: WechatConnecterConfig, meta: InboundMeta): b
 
 const SENTENCE_END = /[。！？!?…~～\n]+/;
 
-/** Trim trailing punctuation / whitespace from a bubble. */
+/** Trim trailing periods (句号) from a bubble — keep all other punctuation. */
 export function stripTrailingPunct(text: string): string {
-  return text.replace(/[\s。！？!?…~～.,，、;；:：]+$/u, "");
+  return text.replace(/[。.]+$/u, "");
 }
 
 function isOpenPunct(ch: string): boolean {
