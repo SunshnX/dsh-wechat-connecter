@@ -236,12 +236,25 @@ class WeChatRuntime:
 
     def _send_front(self, who: str, text: str) -> None:
         gui = self._get_gui()
-        resp = gui.send_msg(text, who, verify=False)
-        ok = bool(getattr(resp, "is_success", False) or resp)
-        if ok:
+        # 已是当前会话则跳过 open_chat（侧栏搜索+点击+固定等待是主要耗时点）。
+        try:
+            already = gui._chat_is_open(who)
+        except Exception:  # noqa: BLE001
+            already = False
+        if not already and not gui.open_chat(who):
+            log("warn", f"[front] 打开会话失败：{who}")
+            return
+        # 快速路径：复用上次成功发送缓存的输入框坐标，不再重新探测。
+        box = getattr(gui, "_last_input_box", None)
+        if box is not None and gui.input_text(text, box=box, fast=True):
+            if gui.click_send(fast=True):
+                log("info", f"[front] 已发送给 {who}")
+                return
+        # 完整路径（会重新探测输入框并缓存，供下次快速路径使用）。
+        if gui.input_text(text) and gui.click_send():
             log("info", f"[front] 已发送给 {who}")
         else:
-            log("warn", f"[front] 发送结果：{getattr(resp, 'message', resp)}")
+            log("warn", f"[front] 发送失败：{who}")
 
     def _send_background(self, who: str, text: str) -> bool:
         try:

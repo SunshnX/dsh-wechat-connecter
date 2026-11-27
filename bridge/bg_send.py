@@ -55,7 +55,13 @@ def send_background(gui, who: str, text: str) -> bool:
         uia = gui._get_uia()  # noqa: SLF001
         if uia is None:
             return False
-        if not uia.open_chat(who):
+        # 已是当前会话则跳过 open_chat（侧栏搜索+点击+固定等待是主要耗时点），
+        # 连续发送同一会话（拆分多条气泡/连续对话）时只有第一条需要打开会话。
+        try:
+            already = gui._chat_is_open(who)  # noqa: SLF001
+        except Exception:  # noqa: BLE001
+            already = False
+        if not already and not gui.open_chat(who):
             return False
         element = uia._chat_input()  # noqa: SLF001
         if element is None:
