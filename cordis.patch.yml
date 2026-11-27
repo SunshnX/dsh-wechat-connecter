@@ -1,0 +1,8 @@
+# dsh-wechat-connecter — bundle patch layer
+#
+# 将本插件声明为 Cordis loader 条目，使包成为标准 profile bundle：
+# `dsh plugin --profile <p> add dsh-wechat-connecter` 安装并挂载，
+# 无需手动编辑 cordis.patch.yml。
+- insert:
+    - id: dsh-wechat-connecter
+      name: 'dsh-wechat-connecter'

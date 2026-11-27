@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WeChat Bridge",
+    "description": "Turn WeChat into a DeepSeek Harness chat client: bridge start/stop, dependency checks, live logs, persona management, and GitHub update checks."
+  }
+}

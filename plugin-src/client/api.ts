@@ -1,0 +1,135 @@
+// Browser half — RPC client helpers and shared types.
+
+export const RPC_ENDPOINT = "dsh-wechat-connecter/management";
+
+export interface RpcConnection {
+  rpc: {
+    call(scope: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<any>;
+  };
+}
+
+export interface BridgeStatus {
+  status: "stopped" | "starting" | "running" | "error";
+  lastError: string;
+  enabled: boolean;
+  depsInstalling: boolean;
+  depsResult: { ok: boolean; message: string } | null;
+  config: Config;
+}
+
+export interface Config {
+  enabled: boolean;
+  autoStart: boolean;
+  sendMode: "front" | "bg" | "auto";
+  pythonPath: string;
+  pollInterval: number;
+  botName: string;
+  private: {
+    enabled: boolean;
+    replyStrategy: "always" | "mention";
+    triggerWords: string[];
+  };
+  group: {
+    enabled: boolean;
+    requireAt: boolean;
+    triggerWords: string[];
+    topicContinuation: boolean;
+  };
+  humanize: {
+    splitLongReply: boolean;
+    maxBubbleChars: number;
+    stripTrailingPunct: boolean;
+    dedupeRepeat: boolean;
+    bubbleGapMs: number;
+  };
+  persona: {
+    active: string;
+    cards: Record<string, string>;
+  };
+  github: {
+    repo: string;
+    checkUpdate: boolean;
+  };
+}
+
+export interface LogLine {
+  seq: number;
+  time: number;
+  level: "info" | "warn" | "error" | "debug";
+  text: string;
+}
+
+export interface LogsResult {
+  logs: LogLine[];
+  lastSeq: number;
+}
+
+export interface UpdateCheckResult {
+  repo: string;
+  currentVersion: string;
+  latestVersion: string | null;
+  hasUpdate: boolean;
+  url?: string;
+  message: string;
+}
+
+export interface SessionBinding {
+  peer: string;
+  binding: {
+    sessionId: string;
+    peerType: "contact" | "group";
+    displayName: string;
+    lastSeen: number;
+  };
+}
+
+export class Api {
+  constructor(private connection: RpcConnection) {}
+
+  call<T = any>(method: string, payload: Record<string, unknown> = {}): Promise<T> {
+    return this.connection.rpc.call("/api", RPC_ENDPOINT, { method, payload });
+  }
+
+  status(): Promise<BridgeStatus> {
+    return this.call("bridge.status");
+  }
+  start(): Promise<{ ok: boolean; message: string; python?: string }> {
+    return this.call("bridge.start");
+  }
+  stop(): Promise<{ ok: boolean; message: string }> {
+    return this.call("bridge.stop");
+  }
+  logs(afterSeq: number): Promise<LogsResult> {
+    return this.call("bridge.logs", { afterSeq });
+  }
+  checkDeps(): Promise<any> {
+    return this.call("bridge.deps.check");
+  }
+  installDeps(): Promise<{ running: boolean; message: string }> {
+    return this.call("bridge.deps.install");
+  }
+  getConfig(): Promise<Config> {
+    return this.call("config.get");
+  }
+  setConfig(patch: Partial<Config>): Promise<Config> {
+    return this.call("config.set", { patch });
+  }
+  savePersona(name: string, content: string): Promise<Config["persona"]> {
+    return this.call("persona.save", { name, content });
+  }
+  deletePersona(name: string): Promise<Config["persona"]> {
+    return this.call("persona.delete", { name });
+  }
+  setActivePersona(name: string): Promise<Config["persona"]> {
+    return this.call("persona.setActive", { name });
+  }
+  listSessions(): Promise<SessionBinding[]> {
+    return this.call("sessions.list");
+  }
+  unbindSession(peer: string): Promise<SessionBinding[]> {
+    return this.call("sessions.unbind", { peer });
+  }
+  checkUpdate(): Promise<UpdateCheckResult> {
+    return this.call("update.check");
+  }
+}

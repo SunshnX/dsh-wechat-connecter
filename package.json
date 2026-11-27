@@ -1,0 +1,96 @@
+{
+  "name": "dsh-wechat-connecter",
+  "version": "0.1.0",
+  "description": "把微信变成 DeepSeek Harness 的聊天客户端：本地 Python 桥接收发微信消息，每个微信对端对应一个 DSH agent 会话，内置人设系统与 DSH 管理页卡片。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "locale",
+    "bridge",
+    "plugin-src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.2.1-0 <0.3.0-0",
+      "dshReleases": {
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-rc.1": "compatible",
+        "0.2.1-rc.2": "compatible",
+        "0.2.1-rc.3": "compatible",
+        "0.2.1-rc.4": "compatible",
+        "0.2.1-rc.5": "compatible",
+        "0.2.2-rc.1": "compatible",
+        "0.2.2-rc.2": "compatible",
+        "0.2.2-rc.5": "compatible"
+      },
+      "node": ">=22.19",
+      "profiles": [
+        "web",
+        "desktop"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "npm run build:host && npm run build:client",
+    "build:host": "tsup",
+    "build:client": "node scripts/build-client.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "wechat",
+    "weixin",
+    "chatbot",
+    "ai-agent",
+    "im"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-home-paths": "*",
+    "@deepseek-ai/schemastery": "*",
+    "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "esbuild": "^0.25.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SunshnX/dsh-wechat-connecter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SunshnX/dsh-wechat-connecter/issues"
+  },
+  "homepage": "https://github.com/SunshnX/dsh-wechat-connecter#readme"
+}
