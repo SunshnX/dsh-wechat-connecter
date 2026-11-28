@@ -67,6 +67,15 @@ export interface ModelConfig {
   model: string;
 }
 
+export interface MemoryConfig {
+  enabled: boolean;
+  inject: boolean;
+  layered: boolean;
+  injectMaxChars: number;
+  maxBytes: number;
+  order: number;
+}
+
 export interface WechatConnecterConfig {
   /** 桥接是否启用（决定是否响应消息）。 */
   enabled: boolean;
@@ -91,6 +100,8 @@ export interface WechatConnecterConfig {
   scheduledDelivery: boolean;
   /** 自动把会话改名为「微信 · 对端名字」（像 dsh-im 的渠道标题前缀）。 */
   autoRenameTitle: boolean;
+  /** 文件式长期记忆（移植自 dsh-soul-md）。 */
+  memory: MemoryConfig;
   private: PrivateChatConfig;
   group: GroupChatConfig;
   humanize: HumanizeConfig;
@@ -125,6 +136,7 @@ export function defaultConfig(): WechatConnecterConfig {
     workspace: "",
     scheduledDelivery: true,
     autoRenameTitle: true,
+    memory: { enabled: true, inject: true, layered: true, injectMaxChars: 8000, maxBytes: 1024 * 1024, order: 0.5 },
     private: {
       enabled: true,
       replyStrategy: "always",
@@ -171,6 +183,7 @@ export function normalizeConfig(input: unknown): WechatConnecterConfig {
     private: { ...base.private, ...(isObj(u.private) ? u.private : {}) },
     group: { ...base.group, ...(isObj(u.group) ? u.group : {}) },
     humanize: { ...base.humanize, ...(isObj(u.humanize) ? u.humanize : {}) },
+    memory: { ...base.memory, ...(isObj(u.memory) ? u.memory : {}) },
     persona: { ...base.persona, ...(isObj(u.persona) ? u.persona : {}) },
     github: { ...base.github, ...(isObj(u.github) ? u.github : {}) },
   } as WechatConnecterConfig;

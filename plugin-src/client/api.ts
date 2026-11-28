@@ -28,6 +28,14 @@ export interface Config {
   workspace: string;
   scheduledDelivery: boolean;
   autoRenameTitle: boolean;
+  memory: {
+    enabled: boolean;
+    inject: boolean;
+    layered: boolean;
+    injectMaxChars: number;
+    maxBytes: number;
+    order: number;
+  };
   private: {
     enabled: boolean;
     replyStrategy: "always" | "mention";

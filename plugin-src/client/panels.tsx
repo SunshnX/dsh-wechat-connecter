@@ -352,6 +352,22 @@ export function WechatPanel(props: { api: Api }) {
       h(SettingRow, { title: "启用自动回复", desc: "关闭后插件只收不发", checked: config.enabled, onChange: (v) => patch({ enabled: v }) }),
       h(SettingRow, { title: "定时任务投递", desc: "定时/计划任务在绑定会话里的回复也发到微信", checked: config.scheduledDelivery, onChange: (v) => patch({ scheduledDelivery: v }) }),
       h(SettingRow, { title: "自动命名会话", desc: "会话标题设为「微信 · 对端名字」，像 dsh-im 那样带渠道标识", checked: config.autoRenameTitle, onChange: (v) => patch({ autoRenameTitle: v }) }),
+      h(SettingRow, { title: "文件式长期记忆", desc: "Agent 用 memory_read/append/rewrite 读写记忆，自动注入提示词", checked: config.memory?.enabled ?? true, onChange: (v) => patch({ memory: { ...(config.memory ?? { inject: true, layered: true, injectMaxChars: 8000, maxBytes: 1048576, order: 0.5 }), enabled: v } } as any) }),
+      config.memory?.enabled
+        ? h(
+            "div",
+            { className: "wc-field" },
+            h("span", { className: "wc-label" }, `记忆注入上限（字符，当前 ${config.memory?.injectMaxChars ?? 8000}）`),
+            h("input", {
+              className: "wc-input",
+              type: "number",
+              min: 0,
+              step: 500,
+              value: config.memory?.injectMaxChars ?? 8000,
+              onChange: (e: any) => patch({ memory: { ...config.memory, injectMaxChars: Math.max(0, Number(e.target.value) || 0) } } as any),
+            }),
+          )
+        : null,
       h(
         "div",
         { className: "wc-field" },

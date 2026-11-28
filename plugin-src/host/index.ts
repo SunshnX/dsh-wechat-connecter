@@ -23,9 +23,10 @@ import { activePersonaText, PERSONA_SECTION_NAME, PERSONA_SECTION_ORDER } from "
 import { humanizeReply, shouldReply } from "./reply";
 import { BridgeProcess, type InboundMessage, type LogLine } from "./bridge";
 import { checkDeps, installDeps, resolvePython } from "./deps";
+import { installMemory } from "./memory";
 
 const name = "dsh-wechat-connecter";
-const inject = ["connection"] as string[];
+const inject = ["connection", "sessionTitle", "systemPrompt", "tools"] as string[];
 
 // ---------------------------------------------------------------------------
 // Config schema (for the DSH config editor / form auto-generation reference).
@@ -42,6 +43,23 @@ const Config = z
     workspace: z.string().default(""),
     scheduledDelivery: z.boolean().default(true),
     autoRenameTitle: z.boolean().default(true),
+    memory: z
+      .object({
+        enabled: z.boolean().default(true),
+        inject: z.boolean().default(true),
+        layered: z.boolean().default(true),
+        injectMaxChars: z.number().default(8000),
+        maxBytes: z.number().default(1024 * 1024),
+        order: z.number().default(0.5),
+      })
+      .default({
+        enabled: true,
+        inject: true,
+        layered: true,
+        injectMaxChars: 8000,
+        maxBytes: 1024 * 1024,
+        order: 0.5,
+      }),
     model: z
       .object({
         provider: z.string().default(""),
@@ -111,6 +129,22 @@ function apply(ctx: any, _config: unknown) {
 
   const store = createConfigStore(dataDir);
   const sessionMap: SessionMapStore = createSessionMapStore(dataDir);
+
+  // 文件式长期记忆（注入 + 工具），配置变更时热重建。
+  let memoryHandle: ReturnType<typeof installMemory> | null = null;
+  function refreshMemory() {
+    try {
+      memoryHandle?.close();
+      memoryHandle = installMemory(ctx, () => store.config.memory, {
+        info: (s) => logger.info?.(s),
+        warn: (s) => logger.warn?.(s),
+      });
+    } catch (error) {
+      logger.warn(`[${name}] 记忆功能初始化失败（已隔离）: ${String(error)}`);
+      memoryHandle = null;
+    }
+  }
+  refreshMemory();
 
   // 有效工作区：自定义目录（绝对路径）优先，否则回退默认目录。
   function resolveWorkspace(): string {
@@ -186,33 +220,50 @@ function apply(ctx: any, _config: unknown) {
 
   const TITLE_PREFIX = "微信 · ";
 
+  /** 读取会话当前标题（从事件源 fold，最可靠对齐 dsh-im）。 */
+  function currentSessionTitle(session: any): string {
+    try {
+      const events = typeof session?.snapshotEvents === "function"
+        ? session.snapshotEvents()
+        : session?.events;
+      if (!Array.isArray(events)) return "";
+      for (let i = events.length - 1; i >= 0; i -= 1) {
+        const ev = events[i];
+        if (ev?.type === "session/title" && typeof ev?.data?.title === "string") {
+          return ev.data.title;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    return "";
+  }
+
   /** 把会话标题设为「微信 · 对端名字」（对齐 dsh-im 的渠道标题前缀）。 */
   function applySessionTitle(agent: any, peer: string, peerType: PeerType, displayName: string) {
     if (!store.config.autoRenameTitle) return;
-    const raw = String(displayName || "").trim();
-    // 没拿到昵称（还是 wxid / 空）时用类型标签兜底，保证标题可读。
-    const label = raw && raw !== peer ? raw : (peerType === "group" ? "微信群" : "微信好友");
-    const title = `${TITLE_PREFIX}${label}`.slice(0, 80);
-    // 已设过相同标题就跳过（已有会话重启后不重复写事件）。
-    const binding = sessionMap.get(peer);
-    if (binding?.title === title) return;
     try {
       const session = agent?.session;
       if (!session) return;
+      const raw = String(displayName || "").trim();
+      // 没拿到昵称（还是 wxid / 空）时用类型标签兜底，保证标题可读。
+      const label = raw && raw !== peer ? raw : (peerType === "group" ? "微信群" : "微信好友");
+      const title = `${TITLE_PREFIX}${label}`.slice(0, 80);
+      // 直接读事件源判断当前标题是否已是目标，避免缓存漂移导致永久跳过。
+      if (currentSessionTitle(session) === title) return;
+      // 优先用注入的 sessionTitle 服务（rename 会把标题 pin 成 user source，
+      // DSH 的自动标题生成就不会覆盖）；兜底直接写 session/title 事件。
       const titleSvc = ctx.sessionTitle;
       if (titleSvc && typeof titleSvc.rename === "function") {
         titleSvc.rename(session, title);
       } else if (typeof session.append === "function") {
-        // 用 user source + 空 messageSeqs：与 DSH 的 sessionTitle.rename() 写入格式
-        // 一致（fallback source 要求非空 messageSeqs，这里不用它）。
         session.append("session/title", {
           title,
           messageSeqs: [],
           source: { kind: "user" },
         });
-      }
-      if (binding) {
-        sessionMap.set(peer, { ...binding, title });
+      } else {
+        return;
       }
       log("info", `会话标题：${title}`);
     } catch (error) {
@@ -440,6 +491,10 @@ function apply(ctx: any, _config: unknown) {
         return;
       }
 
+      // 回复完成后再补一次：DSH 的自动标题可能在第一轮 user/message 之后
+      // 写入了 fallback 标题，这里用 user source 覆盖并 pin 住，防止再被改。
+      applySessionTitle(agent, peer, peerType, msg.displayName);
+
       // Only send when the turn actually produced a new assistant message,
       // otherwise the "last assistant message" would be a stale one.
       if (assistantCount(agent) <= before) return;
@@ -579,6 +634,8 @@ function apply(ctx: any, _config: unknown) {
             if (w && !isAbsolute(w)) return fail("workspace-not-absolute", "工作区必须是绝对路径，或留空使用默认目录。");
           }
           const next = store.patch(patch);
+          // 记忆配置变更 → 热重建注入/工具（text 已是函数，这里主要为 enabled/order 变更）。
+          if ("memory" in patch) refreshMemory();
           return { ok: true, value: next };
         }
         case "workspace.info": {
@@ -810,6 +867,7 @@ function apply(ctx: any, _config: unknown) {
       peerQueues.clear();
       inFlightPeers.clear();
       sessionMap.flush();
+      memoryHandle?.close();
     };
   }, `${name}.lifecycle()`);
 }
